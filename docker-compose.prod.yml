@@ -1,0 +1,52 @@
+# Produkcja / Dokploy. TLS i routing domeny obsługuje Traefik Dokploya.
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER}']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      SESSION_SECRET: ${SESSION_SECRET}
+      APP_BASE_URL: ${APP_BASE_URL}
+      CORS_ORIGIN: ${CORS_ORIGIN}
+      PAYNOW_ENV: ${PAYNOW_ENV}
+      PAYNOW_API_KEY: ${PAYNOW_API_KEY}
+      PAYNOW_SIGNATURE_KEY: ${PAYNOW_SIGNATURE_KEY}
+      PAYNOW_VALIDITY_SECONDS: ${PAYNOW_VALIDITY_SECONDS:-900}
+    depends_on:
+      db:
+        condition: service_healthy
+    labels:
+      - dokploy.enable=true
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - api
+    labels:
+      - dokploy.enable=true
+      # Domenę, port (80) i certyfikat ustawiasz w panelu Dokploy dla tej usługi.
+
+volumes:
+  db_data:

@@ -1,0 +1,159 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum FormStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum SubmissionStatus {
+  RESERVED
+  PAID
+  EXPIRED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  NEW
+  PENDING
+  CONFIRMED
+  REJECTED
+  ERROR
+  ABANDONED
+  EXPIRED
+}
+
+model Admin {
+  id           String    @id @default(uuid()) @db.Uuid
+  email        String    @unique
+  passwordHash String    @map("password_hash")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  disabledAt   DateTime? @map("disabled_at") @db.Timestamptz(3)
+
+  sessions Session[]
+
+  @@map("admins")
+}
+
+model Session {
+  idHash     String    @id @map("id_hash")
+  adminId    String    @map("admin_id") @db.Uuid
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  lastSeenAt DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz(3)
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(3)
+
+  admin Admin @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model Form {
+  id                   String     @id @default(uuid()) @db.Uuid
+  slug                 String     @unique
+  title                String
+  description          String?
+  status               FormStatus @default(DRAFT)
+  schemaJson           Json       @default("{\"fields\":[]}") @map("schema_json")
+  capacityTotal        Int?       @map("capacity_total")
+  closesAt             DateTime   @map("closes_at") @db.Timestamptz(3)
+  requirePhone         Boolean    @default(false) @map("require_phone")
+  termsVersion         String     @default("1.0") @map("terms_version")
+  privacyPolicyVersion String     @default("1.0") @map("privacy_policy_version")
+  // Treści strony powrotu z płatności. NULL = tekst domyślny aplikacji.
+  paymentSuccessTitle  String?    @map("payment_success_title")
+  paymentSuccessBody   String?    @map("payment_success_body")
+  paymentErrorTitle    String?    @map("payment_error_title")
+  paymentErrorBody     String?    @map("payment_error_body")
+  createdAt            DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+  archivedAt           DateTime?  @map("archived_at") @db.Timestamptz(3)
+
+  ticketTypes TicketType[]
+  submissions Submission[]
+
+  @@index([status])
+  @@map("forms")
+}
+
+model TicketType {
+  id         String   @id @default(uuid()) @db.Uuid
+  formId     String   @map("form_id") @db.Uuid
+  name       String
+  priceCents Int      @map("price_cents")
+  currency   String   @default("PLN") @db.Char(3)
+  capacity   Int?
+  sortOrder  Int      @default(0) @map("sort_order")
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  form        Form         @relation(fields: [formId], references: [id], onDelete: Restrict)
+  submissions Submission[]
+
+  @@index([formId])
+  @@map("ticket_types")
+}
+
+model Submission {
+  id                           String           @id @default(uuid()) @db.Uuid
+  formId                       String           @map("form_id") @db.Uuid
+  ticketTypeId                 String           @map("ticket_type_id") @db.Uuid
+  ticketNameSnapshot           String           @map("ticket_name_snapshot")
+  ticketPriceCents             Int              @map("ticket_price_cents")
+  currency                     String           @default("PLN") @db.Char(3)
+  buyerEmail                   String           @map("buyer_email")
+  buyerPhone                   String?          @map("buyer_phone")
+  payloadJson                  Json             @map("payload_json")
+  schemaSnapshotJson           Json             @map("schema_snapshot_json")
+  termsVersionAccepted         String           @map("terms_version_accepted")
+  privacyPolicyVersionAccepted String           @map("privacy_policy_version_accepted")
+  legalAcceptedAt              DateTime         @map("legal_accepted_at") @db.Timestamptz(3)
+  status                       SubmissionStatus @map("status")
+  reservationExpiresAt         DateTime?        @map("reservation_expires_at") @db.Timestamptz(3)
+  publicTokenHash              String           @unique @map("public_token_hash")
+  createdAt                    DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                    DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  form       Form       @relation(fields: [formId], references: [id], onDelete: Restrict)
+  ticketType TicketType @relation(fields: [ticketTypeId], references: [id], onDelete: Restrict)
+  payments   Payment[]
+
+  @@index([formId, status])
+  @@index([ticketTypeId, status])
+  @@index([reservationExpiresAt])
+  @@index([buyerEmail])
+  @@map("submissions")
+}
+
+model Payment {
+  id                  String        @id @default(uuid()) @db.Uuid
+  submissionId        String        @map("submission_id") @db.Uuid
+  provider            String        @default("paynow")
+  providerPaymentId   String?       @unique @map("provider_payment_id")
+  idempotencyKey      String        @unique @map("idempotency_key")
+  amountCents         Int           @map("amount_cents")
+  currency            String        @default("PLN") @db.Char(3)
+  status              PaymentStatus @default(NEW)
+  providerModifiedAt  DateTime?     @map("provider_modified_at") @db.Timestamptz(3)
+  redirectUrl         String?       @map("redirect_url")
+  providerPayloadJson Json?         @map("provider_payload_json")
+  createdAt           DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  submission Submission @relation(fields: [submissionId], references: [id], onDelete: Restrict)
+
+  @@index([submissionId, createdAt(sort: Desc)])
+  @@index([status])
+  @@map("payments")
+}

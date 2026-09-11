@@ -1,0 +1,28 @@
+{
+  "name": "syjonevent",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "npm run build -w @syjonevent/shared && npm run build -w @syjonevent/api && npm run build -w @syjonevent/web",
+    "typecheck": "npm run typecheck -w @syjonevent/shared && npm run typecheck -w @syjonevent/api && npm run typecheck -w @syjonevent/web",
+    "test": "npm run test -w @syjonevent/api",
+    "dev:api": "npm run dev -w @syjonevent/api",
+    "dev:web": "npm run dev -w @syjonevent/web",
+    "prisma:generate": "prisma generate --schema prisma/schema.prisma",
+    "prisma:migrate": "prisma migrate dev --schema prisma/schema.prisma",
+    "prisma:deploy": "prisma migrate deploy --schema prisma/schema.prisma",
+    "seed:admins": "tsx prisma/seed-admins.ts"
+  },
+  "devDependencies": {
+    "prisma": "^5.22.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}
