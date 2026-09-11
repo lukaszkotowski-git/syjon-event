@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { CURRENCY, MAX_TICKET_TYPES_PER_FORM, MIN_PAID_AMOUNT_CENTS } from './constants.js';
+import {
+  CURRENCY,
+  MAX_DESCRIPTION_LENGTH,
+  MAX_TICKET_TYPES_PER_FORM,
+  MIN_PAID_AMOUNT_CENTS,
+} from './constants.js';
 import { formSchemaJson } from './fields.js';
 import { normalizePlPhone } from './phone.js';
 
@@ -23,7 +28,8 @@ const slug = z
 export const createFormRequest = z.object({
   slug,
   title: z.string().trim().min(1).max(200),
-  description: z.string().trim().max(5000).nullish(),
+  // HTML wzbogaconego opisu z edytora (pogrubienie, kolor, wstawiony własny kod HTML).
+  description: z.string().trim().max(MAX_DESCRIPTION_LENGTH).nullish(),
   closesAt: z.string().datetime({ offset: true }),
   capacityTotal: z.number().int().positive().nullish(),
   requirePhone: z.boolean().default(false),
@@ -108,6 +114,14 @@ export const createSubmissionRequest = z.object({
 });
 export type CreateSubmissionRequest = z.infer<typeof createSubmissionRequest>;
 
+/** Edycja zgłoszenia przez administratora: dane kupującego i odpowiedzi na pola formularza. */
+export const updateSubmissionRequest = z.object({
+  buyerEmail: buyerSchema.shape.email.optional(),
+  buyerPhone: buyerSchema.shape.phone.optional(),
+  answers: z.record(z.unknown()).optional(),
+});
+export type UpdateSubmissionRequest = z.infer<typeof updateSubmissionRequest>;
+
 /* ------------------------------- odpowiedzi -------------------------------- */
 
 export interface PublicTicketTypeDto {
@@ -129,6 +143,8 @@ export interface PublicFormDto {
   schemaJson: z.infer<typeof formSchemaJson>;
   ticketTypes: PublicTicketTypeDto[];
   soldOut: boolean;
+  backgroundImageDesktopUrl: string | null;
+  backgroundImageMobileUrl: string | null;
 }
 
 export interface CreateSubmissionResponse {

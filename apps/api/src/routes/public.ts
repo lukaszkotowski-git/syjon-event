@@ -59,6 +59,8 @@ publicRouter.get(
       privacyPolicyVersion: form.privacyPolicyVersion,
       schemaJson: parseFormSchema(form.schemaJson),
       soldOut: formSoldOut,
+      backgroundImageDesktopUrl: form.backgroundImageDesktopUrl,
+      backgroundImageMobileUrl: form.backgroundImageMobileUrl,
       ticketTypes: form.ticketTypes.map((ticket) => {
         const taken = occupancy.perTicketType.get(ticket.id) ?? 0;
         return {

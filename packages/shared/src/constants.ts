@@ -9,6 +9,7 @@ export const DEFAULT_RESERVATION_SECONDS = 900;
 /** Twarde limity payloadu publicznego formularza. */
 export const MAX_FIELDS_PER_FORM = 50;
 export const MAX_TEXT_LENGTH = 2000;
+export const MAX_DESCRIPTION_LENGTH = 20000;
 export const MAX_OPTIONS_PER_SELECT = 100;
 export const MAX_TICKET_TYPES_PER_FORM = 20;
 export const MAX_CUSTOM_SCRIPT_LENGTH = 20000;

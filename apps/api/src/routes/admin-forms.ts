@@ -1,11 +1,15 @@
+import { unlink } from 'node:fs/promises';
+import path from 'node:path';
 import { Router } from 'express';
 import { z } from 'zod';
 import {
+  buildAnswersSchema,
   createFormRequest,
   formSchemaJson,
   MAX_TICKET_TYPES_PER_FORM,
   ticketTypeInput,
   updateFormRequest,
+  updateSubmissionRequest,
   updateTicketTypeRequest,
   type FieldDefinition,
 } from '@syjonevent/shared';
@@ -15,6 +19,7 @@ import { badRequest, conflict, notFound } from '../http/errors.js';
 import { prisma } from '../prisma.js';
 import { countOccupancy, isUniqueViolation } from '../services/capacity.js';
 import { parseFormSchema } from '../services/registration.js';
+import { imageUpload, UPLOAD_DIR, uploadPublicUrl } from '../uploads.js';
 import { toCsv } from '../utils/csv.js';
 
 export const adminFormsRouter: Router = Router();
@@ -179,6 +184,52 @@ adminFormsRouter.post(
       where: { id: form.id },
       data: { status: 'ARCHIVED', archivedAt: form.archivedAt ?? new Date() },
     });
+    res.json({ form: updated });
+  }),
+);
+
+/* ------------------------------ tło wydarzenia ------------------------------ */
+
+const backgroundVariant = z.enum(['desktop', 'mobile']);
+const backgroundField = { desktop: 'backgroundImageDesktopUrl', mobile: 'backgroundImageMobileUrl' } as const;
+
+async function deleteUploadedFile(url: string | null) {
+  if (!url || !url.startsWith('/api/uploads/')) return;
+  try {
+    await unlink(path.join(UPLOAD_DIR, path.basename(url)));
+  } catch {
+    // Plik mógł już nie istnieć — usunięcie rekordu nie może się na tym wywrócić.
+  }
+}
+
+adminFormsRouter.post(
+  '/:id/background/:variant',
+  imageUpload.single('image'),
+  asyncHandler(async (req, res) => {
+    const form = await getFormOr404(req.params.id as string);
+    const variant = backgroundVariant.parse(req.params.variant);
+    if (!req.file) throw badRequest('Brak pliku obrazu (pole "image")');
+
+    const field = backgroundField[variant];
+    await deleteUploadedFile(form[field]);
+
+    const updated = await prisma.form.update({
+      where: { id: form.id },
+      data: { [field]: uploadPublicUrl(req.file.filename) },
+    });
+    res.json({ form: updated });
+  }),
+);
+
+adminFormsRouter.delete(
+  '/:id/background/:variant',
+  asyncHandler(async (req, res) => {
+    const form = await getFormOr404(req.params.id as string);
+    const variant = backgroundVariant.parse(req.params.variant);
+    const field = backgroundField[variant];
+
+    await deleteUploadedFile(form[field]);
+    const updated = await prisma.form.update({ where: { id: form.id }, data: { [field]: null } });
     res.json({ form: updated });
   }),
 );
@@ -373,5 +424,34 @@ adminFormsRouter.get(
         schemaSnapshotJson: parseFormSchema(submission.schemaSnapshotJson),
       },
     });
+  }),
+);
+
+adminFormsRouter.patch(
+  '/:id/submissions/:submissionId',
+  asyncHandler(async (req, res) => {
+    const form = await getFormOr404(req.params.id as string);
+    const submission = await prisma.submission.findFirst({
+      where: { id: req.params.submissionId as string, formId: form.id },
+    });
+    if (!submission) throw notFound('Nie znaleziono zgłoszenia');
+
+    const body = updateSubmissionRequest.parse(req.body);
+    const schema = parseFormSchema(submission.schemaSnapshotJson);
+
+    const updated = await prisma.submission.update({
+      where: { id: submission.id },
+      data: {
+        ...(body.buyerEmail !== undefined ? { buyerEmail: body.buyerEmail } : {}),
+        ...(body.buyerPhone !== undefined ? { buyerPhone: body.buyerPhone } : {}),
+        // Odpowiedzi walidujemy tym samym schematem co przy rejestracji — ten sam
+        // snapshot pól, który obowiązywał w momencie zgłoszenia.
+        ...(body.answers !== undefined
+          ? { payloadJson: buildAnswersSchema(schema.fields as FieldDefinition[]).parse(body.answers) as object }
+          : {}),
+      },
+    });
+
+    res.json({ submission: { ...updated, schemaSnapshotJson: schema } });
   }),
 );

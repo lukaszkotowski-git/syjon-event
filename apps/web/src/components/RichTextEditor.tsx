@@ -1,0 +1,104 @@
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+
+interface Props {
+  value: string;
+  onChange: (html: string) => void;
+}
+
+const COLORS = [
+  { label: 'Marka', value: '#24757a' },
+  { label: 'Czarny', value: '#0f172a' },
+  { label: 'Czerwony', value: '#dc2626' },
+  { label: 'Bursztynowy', value: '#d97706' },
+  { label: 'Niebieski', value: '#2563eb' },
+];
+
+/**
+ * Lekki edytor WYSIWYG na contentEditable + document.execCommand — bez zewnętrznej
+ * biblioteki. onMouseDown z preventDefault na przyciskach paska narzędzi chroni
+ * zaznaczenie tekstu w edytorze (inaczej klik na przycisk je kasuje).
+ */
+export default function RichTextEditor({ value, onChange }: Props) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [showHtmlBox, setShowHtmlBox] = useState(false);
+  const [htmlDraft, setHtmlDraft] = useState('');
+
+  useEffect(() => {
+    if (ref.current && ref.current.innerHTML !== value) {
+      ref.current.innerHTML = value || '';
+    }
+  }, [value]);
+
+  function exec(command: string, arg?: string) {
+    ref.current?.focus();
+    document.execCommand(command, false, arg);
+    onChange(ref.current?.innerHTML ?? '');
+  }
+
+  function insertCustomHtml() {
+    if (!htmlDraft.trim()) return;
+    ref.current?.focus();
+    document.execCommand('insertHTML', false, htmlDraft);
+    onChange(ref.current?.innerHTML ?? '');
+    setHtmlDraft('');
+    setShowHtmlBox(false);
+  }
+
+  const toolbarButton = (label: ReactNode, onClick: () => void) => (
+    <button
+      type="button"
+      className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium hover:bg-slate-50"
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={onClick}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div>
+      <div className="mb-2 flex flex-wrap items-center gap-1.5">
+        {toolbarButton(<b>B</b>, () => exec('bold'))}
+        {toolbarButton(<i>I</i>, () => exec('italic'))}
+        {toolbarButton('Wyczyść styl', () => exec('removeFormat'))}
+        <span className="mx-1 h-5 w-px bg-slate-200" />
+        {COLORS.map((c) => (
+          <button
+            key={c.value}
+            type="button"
+            title={c.label}
+            className="h-6 w-6 rounded-full border border-slate-300"
+            style={{ backgroundColor: c.value }}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => exec('foreColor', c.value)}
+          />
+        ))}
+        <span className="mx-1 h-5 w-px bg-slate-200" />
+        {toolbarButton(showHtmlBox ? 'Anuluj HTML' : 'Wstaw HTML', () => setShowHtmlBox((s) => !s))}
+      </div>
+
+      {showHtmlBox && (
+        <div className="mb-2 space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <textarea
+            className="input h-24 font-mono text-xs"
+            spellCheck={false}
+            placeholder="<div>własny kod HTML wstawiany w miejscu kursora</div>"
+            value={htmlDraft}
+            onChange={(e) => setHtmlDraft(e.target.value)}
+          />
+          <button type="button" className="btn-secondary" onMouseDown={(e) => e.preventDefault()} onClick={insertCustomHtml}>
+            Wstaw w opisie
+          </button>
+        </div>
+      )}
+
+      <div
+        ref={ref}
+        contentEditable
+        className="input min-h-[120px] [&_a]:underline"
+        onInput={() => onChange(ref.current?.innerHTML ?? '')}
+        onBlur={() => onChange(ref.current?.innerHTML ?? '')}
+      />
+    </div>
+  );
+}

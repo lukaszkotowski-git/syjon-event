@@ -34,6 +34,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    volumes:
+      - uploads_data:/app/apps/api/uploads
     labels:
       - dokploy.enable=true
 
@@ -50,3 +52,4 @@ services:
 
 volumes:
   db_data:
+  uploads_data:

@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
+import { MulterError } from 'multer';
 import { ZodError } from 'zod';
 
 export class AppError extends Error {
@@ -33,6 +34,16 @@ export function errorHandler(error: unknown, req: Request, res: Response, _next:
     res
       .status(error.statusCode)
       .json({ error: { code: error.code, message: error.message, details: error.details } });
+    return;
+  }
+  if (error instanceof MulterError) {
+    const message =
+      error.code === 'LIMIT_FILE_SIZE' ? 'Plik jest za duży (limit 5 MB)' : 'Nie udało się wgrać pliku';
+    res.status(400).json({ error: { code: 'UPLOAD_ERROR', message } });
+    return;
+  }
+  if (error instanceof Error && error.message.startsWith('Dozwolone są tylko obrazy')) {
+    res.status(400).json({ error: { code: 'UPLOAD_ERROR', message: error.message } });
     return;
   }
 

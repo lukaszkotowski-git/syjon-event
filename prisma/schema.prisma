@@ -75,6 +75,8 @@ model Form {
   paymentSuccessBody   String?    @map("payment_success_body")
   paymentErrorTitle    String?    @map("payment_error_title")
   paymentErrorBody     String?    @map("payment_error_body")
+  backgroundImageDesktopUrl String? @map("background_image_desktop_url")
+  backgroundImageMobileUrl  String? @map("background_image_mobile_url")
   createdAt            DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt            DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
   archivedAt           DateTime?  @map("archived_at") @db.Timestamptz(3)

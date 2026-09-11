@@ -5,3 +5,4 @@ dist
 *.log
 *.tsbuildinfo
 .claude/settings.local.json
+apps/api/uploads

@@ -30,14 +30,14 @@ export default function AdminFormsList() {
   return (
     <section>
       <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Formularze</h1>
+        <h1 className="text-2xl font-semibold">Wydarzenia</h1>
         <Link to="/admin/formularze/nowy" className="btn-primary">
-          Nowy formularz
+          Nowe wydarzenie
         </Link>
       </div>
 
       {!forms && <p className="text-slate-500">Ładowanie…</p>}
-      {forms?.length === 0 && <p className="text-slate-500">Brak formularzy. Utwórz pierwszy.</p>}
+      {forms?.length === 0 && <p className="text-slate-500">Brak wydarzeń. Utwórz pierwsze.</p>}
 
       <div className="grid gap-3">
         {forms?.map((form) => (

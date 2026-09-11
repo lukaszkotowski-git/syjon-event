@@ -29,6 +29,10 @@ COPY --from=build /app/packages/shared/dist ./packages/shared/dist
 COPY --from=build /app/apps/api/package.json ./apps/api/package.json
 COPY --from=build /app/apps/api/dist ./apps/api/dist
 
+# Katalog na wgrywane grafiki tła — musi istnieć i być zapisywalny przez usera node
+# zanim zamontujemy na nim wolumen (patrz docker-compose.prod.yml).
+RUN mkdir -p apps/api/uploads && chown -R node:node apps/api/uploads
+
 USER node
 EXPOSE 4000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \

@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import type { FieldDefinition } from '@syjonevent/shared';
 import FieldBuilder from '../components/FieldBuilder';
+import RichTextEditor from '../components/RichTextEditor';
 import { api, ApiError, formatPln } from '../lib/api';
 
 interface Ticket {
@@ -28,6 +29,8 @@ interface FormDetails {
   paymentSuccessBody: string | null;
   paymentErrorTitle: string | null;
   paymentErrorBody: string | null;
+  backgroundImageDesktopUrl: string | null;
+  backgroundImageMobileUrl: string | null;
   schemaJson: { fields: FieldDefinition[]; customScript?: string };
   ticketTypes: Ticket[];
 }
@@ -52,6 +55,7 @@ export default function AdminFormEditor() {
   });
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [backgroundBusy, setBackgroundBusy] = useState<'desktop' | 'mobile' | null>(null);
 
   const [draft, setDraft] = useState({
     slug: '',
@@ -178,10 +182,43 @@ export default function AdminFormEditor() {
     }
   }
 
+  // Odpowiedź uploadu/usunięcia to surowy rekord Form bez ticketTypes — scalamy tylko
+  // pola tła w istniejący stan, żeby nie zgubić listy biletów renderowanej niżej.
+  function mergeBackgroundFields(patch: Pick<FormDetails, 'backgroundImageDesktopUrl' | 'backgroundImageMobileUrl'>) {
+    setForm((prev) => (prev ? { ...prev, ...patch } : prev));
+  }
+
+  async function uploadBackground(variant: 'desktop' | 'mobile', file: File) {
+    setBackgroundBusy(variant);
+    try {
+      const body = new FormData();
+      body.append('image', file);
+      const data = await api.post<{ form: FormDetails }>(`/api/forms/${id}/background/${variant}`, body);
+      mergeBackgroundFields(data.form);
+      setMessage({ kind: 'ok', text: 'Wgrano grafikę tła' });
+    } catch (error) {
+      setMessage({ kind: 'error', text: error instanceof ApiError ? error.message : 'Nie udało się wgrać pliku' });
+    } finally {
+      setBackgroundBusy(null);
+    }
+  }
+
+  async function removeBackground(variant: 'desktop' | 'mobile') {
+    setBackgroundBusy(variant);
+    try {
+      const data = await api.delete<{ form: FormDetails }>(`/api/forms/${id}/background/${variant}`);
+      mergeBackgroundFields(data.form);
+    } catch (error) {
+      setMessage({ kind: 'error', text: error instanceof ApiError ? error.message : 'Nie udało się usunąć grafiki' });
+    } finally {
+      setBackgroundBusy(null);
+    }
+  }
+
   return (
     <section className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">{isNew ? 'Nowy formularz' : form?.title ?? 'Formularz'}</h1>
+        <h1 className="text-2xl font-semibold">{isNew ? 'Nowe wydarzenie' : form?.title ?? 'Wydarzenie'}</h1>
         <Link to="/admin" className="btn-secondary">
           Wróć
         </Link>
@@ -221,10 +258,9 @@ export default function AdminFormEditor() {
 
         <div>
           <label className="label">Opis</label>
-          <textarea
-            className="input h-24"
+          <RichTextEditor
             value={draft.description}
-            onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+            onChange={(html) => setDraft({ ...draft, description: html })}
           />
         </div>
 
@@ -275,6 +311,53 @@ export default function AdminFormEditor() {
           />
           Telefon wymagany w tym wydarzeniu
         </label>
+
+        <div>
+          <h2 className="mb-2 text-lg font-medium">Tło wydarzenia</h2>
+          {isNew ? (
+            <p className="text-sm text-slate-500">Zapisz wydarzenie, aby dodać grafikę tła.</p>
+          ) : (
+            <div className="grid gap-4 md:grid-cols-2">
+              {(
+                [
+                  { variant: 'desktop' as const, label: 'Duże (ekrany od 800px)', url: form?.backgroundImageDesktopUrl ?? null },
+                  { variant: 'mobile' as const, label: 'Małe (telefony)', url: form?.backgroundImageMobileUrl ?? null },
+                ]
+              ).map(({ variant, label, url }) => (
+                <div key={variant} className="rounded-lg border border-slate-200 p-3">
+                  <p className="label">{label}</p>
+                  {url && (
+                    <img src={url} alt="" className="mb-2 h-32 w-full rounded-md object-cover" />
+                  )}
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/gif"
+                      className="text-xs"
+                      disabled={backgroundBusy === variant}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        e.target.value = '';
+                        if (file) void uploadBackground(variant, file);
+                      }}
+                    />
+                    {url && (
+                      <button
+                        type="button"
+                        className="btn-secondary px-2 py-1 text-xs text-red-600"
+                        disabled={backgroundBusy === variant}
+                        onClick={() => removeBackground(variant)}
+                      >
+                        Usuń
+                      </button>
+                    )}
+                  </div>
+                  {backgroundBusy === variant && <p className="mt-1 text-xs text-slate-500">Wgrywanie…</p>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         <div>
           <h2 className="mb-2 text-lg font-medium">Pola dodatkowe</h2>

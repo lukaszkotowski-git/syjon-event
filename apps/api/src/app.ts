@@ -8,6 +8,7 @@ import { adminFormsRouter } from './routes/admin-forms.js';
 import { authRouter } from './routes/auth.js';
 import { publicRouter } from './routes/public.js';
 import { webhookRouter } from './routes/webhook.js';
+import { UPLOAD_DIR } from './uploads.js';
 
 export function createApp(): Express {
   const app = express();
@@ -33,6 +34,7 @@ export function createApp(): Express {
   app.use(express.json({ limit: '256kb' }));
   app.use(cookieParser());
 
+  app.use('/api/uploads', express.static(UPLOAD_DIR, { maxAge: '7d' }));
   app.use('/api/auth', authRouter);
   app.use('/api/forms', adminFormsRouter);
   app.use('/api/public', publicRouter);

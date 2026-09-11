@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { api, formatDateTime, formatPln } from '../lib/api';
+import type { FieldDefinition } from '@syjonevent/shared';
+import { api, ApiError, formatDateTime, formatPln } from '../lib/api';
 
 interface SubmissionRow {
   id: string;
@@ -11,6 +12,18 @@ interface SubmissionRow {
   currency: string;
   status: 'RESERVED' | 'PAID' | 'EXPIRED' | 'CANCELLED';
   reservationExpiresAt: string | null;
+  createdAt: string;
+}
+
+interface SubmissionDetail {
+  id: string;
+  buyerEmail: string;
+  buyerPhone: string | null;
+  ticketNameSnapshot: string;
+  ticketPriceCents: number;
+  status: SubmissionRow['status'];
+  payloadJson: Record<string, string | number | boolean>;
+  schemaSnapshotJson: { fields: FieldDefinition[] };
   createdAt: string;
 }
 
@@ -27,7 +40,37 @@ export default function AdminSubmissions() {
   const [total, setTotal] = useState(0);
   const [status, setStatus] = useState('');
   const [email, setEmail] = useState('');
-  const [detail, setDetail] = useState<Record<string, unknown> | null>(null);
+  const [detail, setDetail] = useState<SubmissionDetail | null>(null);
+  const [editBuyer, setEditBuyer] = useState({ email: '', phone: '' });
+  const [editAnswers, setEditAnswers] = useState<Record<string, string | number | boolean>>({});
+  const [saveMessage, setSaveMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  function openDetail(submission: SubmissionDetail) {
+    setDetail(submission);
+    setEditBuyer({ email: submission.buyerEmail, phone: submission.buyerPhone ?? '' });
+    setEditAnswers(submission.payloadJson ?? {});
+    setSaveMessage(null);
+  }
+
+  async function saveDetail() {
+    if (!detail) return;
+    setSaving(true);
+    setSaveMessage(null);
+    try {
+      const data = await api.patch<{ submission: SubmissionDetail }>(
+        `/api/forms/${id}/submissions/${detail.id}`,
+        { buyerEmail: editBuyer.email, buyerPhone: editBuyer.phone || null, answers: editAnswers },
+      );
+      openDetail(data.submission);
+      setSaveMessage({ kind: 'ok', text: 'Zapisano zmiany' });
+      void load();
+    } catch (error) {
+      setSaveMessage({ kind: 'error', text: error instanceof ApiError ? error.message : 'Błąd zapisu' });
+    } finally {
+      setSaving(false);
+    }
+  }
 
   const load = useCallback(async () => {
     const params = new URLSearchParams();
@@ -46,14 +89,19 @@ export default function AdminSubmissions() {
 
   return (
     <section className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Zgłoszenia ({total})</h1>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-3">
+          <Link to="/admin" className="btn-secondary">
+            ← Wydarzenia
+          </Link>
+          <h1 className="text-2xl font-semibold">Zgłoszenia ({total})</h1>
+        </div>
         <div className="flex gap-2">
           <a className="btn-secondary" href={`/api/forms/${id}/submissions.csv`}>
             Eksport CSV
           </a>
           <Link to={`/admin/formularze/${id}`} className="btn-secondary">
-            Edytuj formularz
+            Edytuj wydarzenie
           </Link>
         </div>
       </div>
@@ -100,10 +148,10 @@ export default function AdminSubmissions() {
                   <button
                     className="text-brand-600 hover:underline"
                     onClick={async () => {
-                      const data = await api.get<{ submission: Record<string, unknown> }>(
+                      const data = await api.get<{ submission: SubmissionDetail }>(
                         `/api/forms/${id}/submissions/${row.id}`,
                       );
-                      setDetail(data.submission);
+                      openDetail(data.submission);
                     }}
                   >
                     Szczegóły
@@ -123,16 +171,99 @@ export default function AdminSubmissions() {
       </div>
 
       {detail && (
-        <div className="card">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-lg font-medium">Szczegóły zgłoszenia (dane snapshotowe)</h2>
+        <div className="card space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-medium">
+              Edycja zgłoszenia · {detail.ticketNameSnapshot} · {formatPln(detail.ticketPriceCents)}
+            </h2>
             <button className="btn-secondary" onClick={() => setDetail(null)}>
               Zamknij
             </button>
           </div>
-          <pre className="max-h-96 overflow-auto rounded-lg bg-slate-900 p-4 text-xs text-slate-100">
-            {JSON.stringify(detail, null, 2)}
-          </pre>
+
+          {saveMessage && (
+            <p
+              className={`rounded-lg px-3 py-2 text-sm ${
+                saveMessage.kind === 'ok' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
+              }`}
+            >
+              {saveMessage.text}
+            </p>
+          )}
+
+          <div className="grid gap-3 md:grid-cols-2">
+            <div>
+              <label className="label">E-mail kupującego</label>
+              <input
+                className="input"
+                type="email"
+                value={editBuyer.email}
+                onChange={(e) => setEditBuyer({ ...editBuyer, email: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="label">Telefon</label>
+              <input
+                className="input"
+                value={editBuyer.phone}
+                onChange={(e) => setEditBuyer({ ...editBuyer, phone: e.target.value })}
+              />
+            </div>
+          </div>
+
+          {detail.schemaSnapshotJson.fields.length > 0 && (
+            <div className="space-y-3">
+              <p className="label">Odpowiedzi</p>
+              {detail.schemaSnapshotJson.fields.map((field) => (
+                <div key={field.key}>
+                  {field.type === 'checkbox' ? (
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(editAnswers[field.key])}
+                        onChange={(e) => setEditAnswers({ ...editAnswers, [field.key]: e.target.checked })}
+                      />
+                      {field.label}
+                    </label>
+                  ) : (
+                    <>
+                      <label className="label">{field.label}</label>
+                      {field.type === 'select' ? (
+                        <select
+                          className="input"
+                          value={String(editAnswers[field.key] ?? '')}
+                          onChange={(e) => setEditAnswers({ ...editAnswers, [field.key]: e.target.value })}
+                        >
+                          <option value="">— wybierz —</option>
+                          {field.options.map((option) => (
+                            <option key={option} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          className="input"
+                          type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}
+                          value={String(editAnswers[field.key] ?? '')}
+                          onChange={(e) => setEditAnswers({ ...editAnswers, [field.key]: e.target.value })}
+                        />
+                      )}
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <p className="text-xs text-slate-500">
+            Status: {detail.status} · Zgłoszono {formatDateTime(detail.createdAt)}. Status, bilet i płatności
+            edytuje się osobno — tu poprawiasz tylko dane kupującego i odpowiedzi.
+          </p>
+
+          <button className="btn-primary" onClick={saveDetail} disabled={saving}>
+            {saving ? 'Zapisywanie…' : 'Zapisz zmiany'}
+          </button>
         </div>
       )}
     </section>
