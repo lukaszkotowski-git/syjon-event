@@ -43,6 +43,13 @@ export default function PublicForm() {
   const [legalError, setLegalError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(true);
+  const [formRevealed, setFormRevealed] = useState(false);
+
+  function revealForm() {
+    setAboutOpen(false);
+    setFormRevealed(true);
+  }
 
   useEffect(() => {
     api
@@ -207,17 +214,16 @@ export default function PublicForm() {
   const dateBadge = eventDateBadge(form.closesAt);
 
   return (
-    <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-10">
+    <main className="mx-auto max-w-2xl px-4 py-6 sm:px-6 sm:py-10 lg:max-w-4xl">
       {allSoldOut ? (
         <div className="card border-amber-200 bg-amber-50 text-center">
           <h2 className="font-semibold text-amber-900">Brak wolnych miejsc</h2>
           <p className="mt-1 text-sm text-amber-800">Wszystkie bilety na to wydarzenie zostały już sprzedane.</p>
         </div>
       ) : (
-        <div className="flex flex-col overflow-hidden rounded-3xl border border-slate-200/70 bg-white shadow-card md:grid md:grid-cols-5 md:items-start">
-          {/* Zdjęcie wydarzenia (lub gradient marki). Zawsze pierwsze — na mobile i desktopie. */}
-          <div className="order-1 md:col-span-3">
-            <div className="relative min-h-[260px] overflow-hidden sm:min-h-[340px] md:min-h-[460px]">
+        <div className="overflow-hidden rounded-3xl border border-slate-200/70 bg-white shadow-card">
+          {/* Zdjęcie wydarzenia (lub gradient marki). */}
+          <div className="relative min-h-[260px] overflow-hidden sm:min-h-[340px]">
               {hasHeroImage ? (
                 <>
                   {form.backgroundImageMobileUrl && (
@@ -254,23 +260,72 @@ export default function PublicForm() {
                 </h1>
               </div>
             </div>
-          </div>
 
-          {/* O wydarzeniu — na mobile zaraz pod zdjęciem, na desktopie w kolumnie z boku. */}
-          <div className="order-2 border-t border-slate-200 bg-brand-50/40 p-5 sm:p-8 md:col-span-2 md:row-span-2 md:border-l md:border-t-0 md:sticky md:top-6 md:self-start">
-            {form.description && (
-              <>
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">O wydarzeniu</p>
-                <div
-                  className="prose prose-slate mt-2 max-w-none text-sm text-slate-600 sm:text-base [&_a]:text-brand-700 [&_a]:underline"
-                  dangerouslySetInnerHTML={{ __html: form.description }}
+          {/* O wydarzeniu — akordeon, domyślnie rozwinięty. */}
+          <div className="border-t border-slate-200 bg-brand-50/40">
+            <button
+              type="button"
+              onClick={() => setAboutOpen((v) => !v)}
+              className="flex w-full items-center justify-between gap-4 p-5 text-left sm:p-8"
+            >
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">O wydarzeniu</span>
+              <svg
+                viewBox="0 0 20 20"
+                fill="none"
+                className={`h-4 w-4 shrink-0 text-slate-400 transition-transform duration-300 ${aboutOpen ? 'rotate-180' : ''}`}
+              >
+                <path
+                  d="M5 7.5 10 12.5 15 7.5"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
                 />
-              </>
-            )}
+              </svg>
+            </button>
+            <div
+              className={`grid transition-[grid-template-rows] duration-300 ease-in-out ${aboutOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}
+            >
+              <div className="overflow-hidden px-5 sm:px-8">
+                {form.description && (
+                  <div
+                    className="prose prose-slate max-w-none pb-5 text-sm text-slate-600 sm:pb-8 sm:text-base [&_a]:text-brand-700 [&_a]:underline"
+                    dangerouslySetInnerHTML={{ __html: form.description }}
+                  />
+                )}
+                {!formRevealed && (
+                  <div className="pb-5 sm:pb-8">
+                    <button type="button" onClick={revealForm} className="btn-primary">
+                      Przejdź do rejestracji →
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
 
-          {/* Formularz rejestracyjny — na mobile pod sekcją "O wydarzeniu". */}
-          <div className="order-3 p-5 sm:p-8 md:col-span-3">
+          {/* Formularz rejestracyjny — zwinięty do czasu kliknięcia; potem zawsze rozwinięty. */}
+          {!formRevealed ? (
+            <button
+              type="button"
+              onClick={revealForm}
+              className="flex w-full items-center justify-between gap-4 border-t border-slate-200 p-5 text-left sm:p-8"
+            >
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Formularz rejestracyjny
+              </span>
+              <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4 shrink-0 text-slate-400">
+                <path
+                  d="M5 7.5 10 12.5 15 7.5"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+          ) : (
+          <div className="border-t border-slate-200 p-5 sm:p-8">
               <div className="flex items-start justify-between gap-4">
                 <h2 className="font-display text-xl font-bold leading-snug text-slate-900">{form.title}</h2>
                 <div className="shrink-0 rounded-2xl bg-brand-900 px-3.5 py-2.5 text-center text-white">
@@ -540,6 +595,7 @@ export default function PublicForm() {
             )}
           </div>
           </div>
+          )}
         </div>
       )}
     </main>
