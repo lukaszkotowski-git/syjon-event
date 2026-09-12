@@ -8,7 +8,7 @@ COPY package.json package-lock.json ./
 COPY packages/shared/package.json packages/shared/
 COPY apps/api/package.json apps/api/
 COPY apps/web/package.json apps/web/
-RUN npm ci --workspaces --include-workspace-root --omit=optional
+RUN npm ci --workspaces --include-workspace-root
 
 FROM deps AS build
 COPY tsconfig.base.json ./
