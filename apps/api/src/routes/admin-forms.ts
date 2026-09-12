@@ -235,6 +235,30 @@ adminFormsRouter.delete(
   }),
 );
 
+adminFormsRouter.delete(
+  '/:id',
+  asyncHandler(async (req, res) => {
+    const form = await getFormOr404(req.params.id as string);
+    const submissionCount = await prisma.submission.count({ where: { formId: form.id } });
+    if (submissionCount > 0) {
+      throw conflict(
+        'Nie można usunąć formularza ze zgłoszeniami — zarchiwizuj go zamiast tego',
+        'FORM_HAS_SUBMISSIONS',
+      );
+    }
+
+    await deleteUploadedFile(form.backgroundImageDesktopUrl);
+    await deleteUploadedFile(form.backgroundImageMobileUrl);
+
+    await prisma.$transaction([
+      prisma.ticketType.deleteMany({ where: { formId: form.id } }),
+      prisma.form.delete({ where: { id: form.id } }),
+    ]);
+
+    res.status(204).end();
+  }),
+);
+
 /* ----------------------------------- bilety -------------------------------- */
 
 adminFormsRouter.post(

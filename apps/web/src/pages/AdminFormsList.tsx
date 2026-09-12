@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, formatDateTime } from '../lib/api';
+import { api, ApiError, formatDateTime } from '../lib/api';
 
 interface FormRow {
   id: string;
@@ -22,10 +22,30 @@ const statusStyle: Record<FormRow['status'], string> = {
 
 export default function AdminFormsList() {
   const [forms, setForms] = useState<FormRow[] | null>(null);
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [errorById, setErrorById] = useState<Record<string, string>>({});
 
   useEffect(() => {
     api.get<{ forms: FormRow[] }>('/api/forms').then((data) => setForms(data.forms));
   }, []);
+
+  async function deleteForm(id: string) {
+    setBusyId(id);
+    setErrorById((prev) => ({ ...prev, [id]: '' }));
+    try {
+      await api.delete(`/api/forms/${id}`);
+      setForms((prev) => prev?.filter((f) => f.id !== id) ?? prev);
+      setConfirmId(null);
+    } catch (error) {
+      setErrorById((prev) => ({
+        ...prev,
+        [id]: error instanceof ApiError ? error.message : 'Nie udało się usunąć wydarzenia',
+      }));
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   return (
     <section>
@@ -55,6 +75,7 @@ export default function AdminFormsList() {
                 {form.capacityTotal !== null ? ` / ${form.capacityTotal}` : ''} · rezerwacje{' '}
                 {form.reservedCount}
               </p>
+              {errorById[form.id] && <p className="mt-1.5 text-sm text-red-600">{errorById[form.id]}</p>}
             </div>
             <div className="flex gap-2">
               <Link to={`/admin/formularze/${form.id}`} className="btn-secondary">
@@ -63,6 +84,29 @@ export default function AdminFormsList() {
               <Link to={`/admin/formularze/${form.id}/zgloszenia`} className="btn-secondary">
                 Zgłoszenia
               </Link>
+              {confirmId === form.id ? (
+                <>
+                  <button
+                    type="button"
+                    className="btn-secondary text-red-600"
+                    disabled={busyId === form.id}
+                    onClick={() => deleteForm(form.id)}
+                  >
+                    {busyId === form.id ? 'Usuwanie…' : 'Na pewno usuń'}
+                  </button>
+                  <button type="button" className="btn-ghost" onClick={() => setConfirmId(null)}>
+                    Anuluj
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="btn-secondary text-red-600"
+                  onClick={() => setConfirmId(form.id)}
+                >
+                  Usuń
+                </button>
+              )}
             </div>
           </article>
         ))}
