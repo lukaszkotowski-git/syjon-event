@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import type { FieldDefinition } from '@syjonevent/shared';
-import FieldBuilder from '../components/FieldBuilder';
+import type { FormSection } from '@syjonevent/shared';
+import SectionBuilder from '../components/SectionBuilder';
 import RichTextEditor from '../components/RichTextEditor';
 import { api, ApiError, formatPln } from '../lib/api';
 
@@ -31,7 +31,7 @@ interface FormDetails {
   paymentErrorBody: string | null;
   backgroundImageDesktopUrl: string | null;
   backgroundImageMobileUrl: string | null;
-  schemaJson: { fields: FieldDefinition[]; customScript?: string };
+  schemaJson: { sections: FormSection[]; customScript?: string };
   ticketTypes: Ticket[];
 }
 
@@ -47,7 +47,7 @@ export default function AdminFormEditor() {
   const isNew = !id;
 
   const [form, setForm] = useState<FormDetails | null>(null);
-  const [fields, setFields] = useState<FieldDefinition[]>([]);
+  const [sections, setSections] = useState<FormSection[]>([]);
   const [customScript, setCustomScript] = useState('');
   const [occupancy, setOccupancy] = useState<{ total: number; perTicketType: Record<string, number> }>({
     total: 0,
@@ -81,7 +81,7 @@ export default function AdminFormEditor() {
       .then((data) => {
         setForm(data.form);
         setOccupancy(data.occupancy);
-        setFields(data.form.schemaJson.fields ?? []);
+        setSections(data.form.schemaJson.sections ?? []);
         setCustomScript(data.form.schemaJson.customScript ?? '');
         setDraft({
           slug: data.form.slug,
@@ -107,11 +107,14 @@ export default function AdminFormEditor() {
     setMessage(null);
     // Siatka bezpieczeństwa: opcje select mogą zawierać niedoczyszczone puste
     // wiersze podczas edycji (czyszczenie dzieje się na onBlur w FieldBuilder).
-    const cleanedFields = fields.map((field) =>
-      field.type === 'select'
-        ? { ...field, options: field.options.map((o) => o.trim()).filter(Boolean) }
-        : field,
-    );
+    const cleanedSections = sections.map((section) => ({
+      ...section,
+      fields: section.fields.map((field) =>
+        field.type === 'select'
+          ? { ...field, options: field.options.map((o) => o.trim()).filter(Boolean) }
+          : field,
+      ),
+    }));
     const payload = {
       slug: draft.slug,
       title: draft.title,
@@ -126,7 +129,7 @@ export default function AdminFormEditor() {
       paymentSuccessBody: draft.paymentSuccessBody || null,
       paymentErrorTitle: draft.paymentErrorTitle || null,
       paymentErrorBody: draft.paymentErrorBody || null,
-      schemaJson: { fields: cleanedFields, customScript: customScript || undefined },
+      schemaJson: { sections: cleanedSections, customScript: customScript || undefined },
     };
     try {
       if (isNew) {
@@ -361,7 +364,7 @@ export default function AdminFormEditor() {
 
         <div>
           <h2 className="mb-2 text-lg font-medium">Pola dodatkowe</h2>
-          <FieldBuilder fields={fields} onChange={setFields} />
+          <SectionBuilder sections={sections} onChange={setSections} />
         </div>
 
         <div>

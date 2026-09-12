@@ -3,8 +3,10 @@ import { useParams } from 'react-router-dom';
 import {
   buildAnswersSchema,
   buyerSchema,
+  flattenSections,
   type CreateSubmissionResponse,
   type FieldDefinition,
+  type FormSection,
   type PublicFormDto,
 } from '@syjonevent/shared';
 import { api, ApiError, formatPln } from '../lib/api';
@@ -77,8 +79,12 @@ export default function PublicForm() {
     };
   }, [form]);
 
-  const fields = useMemo(() => (form?.schemaJson.fields as FieldDefinition[] | undefined) ?? [], [form]);
-  const hasCustomFields = fields.length > 0;
+  const sections = useMemo(
+    () => ((form?.schemaJson.sections as FormSection[] | undefined) ?? []).filter((s) => s.fields.length > 0),
+    [form],
+  );
+  const fields = useMemo(() => flattenSections(sections), [sections]);
+  const hasCustomFields = sections.length > 0;
 
   const steps: StepConfig[] = useMemo(() => {
     const list: StepConfig[] = [];
@@ -346,54 +352,59 @@ export default function PublicForm() {
                   <h2 className="text-lg font-semibold text-slate-900">Dodatkowe informacje</h2>
                   <p className="text-sm text-slate-500">Organizator prosi o uzupełnienie poniższych pól.</p>
                 </div>
-                {fields.map((field) => {
-                  const hasError = Boolean(fieldErrors[field.key]);
-                  return (
-                    <div key={field.key} data-field-key={field.key}>
-                      {field.type === 'checkbox' ? (
-                        <label className={`flex items-start gap-2 text-sm ${hasError ? 'text-red-700' : ''}`}>
-                          <input
-                            type="checkbox"
-                            className="mt-0.5 h-4 w-4 rounded border-slate-300 accent-brand-600 focus:ring-brand-200"
-                            checked={Boolean(answers[field.key])}
-                            onChange={(e) => setAnswers({ ...answers, [field.key]: e.target.checked })}
-                          />
-                          <span>
-                            {field.label} {field.required && '*'}
-                          </span>
-                        </label>
-                      ) : (
-                        <>
-                          <label className={`label ${hasError ? 'text-red-700' : ''}`}>
-                            {field.label} {field.required && '*'}
-                          </label>
-                          {field.type === 'select' ? (
-                            <select
-                              className={`input ${hasError ? 'input-error' : ''}`}
-                              value={String(answers[field.key] ?? '')}
-                              onChange={(e) => setAnswers({ ...answers, [field.key]: e.target.value })}
-                            >
-                              <option value="">— wybierz —</option>
-                              {field.options.map((option) => (
-                                <option key={option} value={option}>
-                                  {option}
-                                </option>
-                              ))}
-                            </select>
+                {sections.map((section) => (
+                  <div key={section.id} className="space-y-4">
+                    <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{section.name}</h3>
+                    {section.fields.map((field) => {
+                      const hasError = Boolean(fieldErrors[field.key]);
+                      return (
+                        <div key={field.key} data-field-key={field.key}>
+                          {field.type === 'checkbox' ? (
+                            <label className={`flex items-start gap-2 text-sm ${hasError ? 'text-red-700' : ''}`}>
+                              <input
+                                type="checkbox"
+                                className="mt-0.5 h-4 w-4 rounded border-slate-300 accent-brand-600 focus:ring-brand-200"
+                                checked={Boolean(answers[field.key])}
+                                onChange={(e) => setAnswers({ ...answers, [field.key]: e.target.checked })}
+                              />
+                              <span>
+                                {field.label} {field.required && '*'}
+                              </span>
+                            </label>
                           ) : (
-                            <input
-                              className={`input ${hasError ? 'input-error' : ''}`}
-                              type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}
-                              value={String(answers[field.key] ?? '')}
-                              onChange={(e) => setAnswers({ ...answers, [field.key]: e.target.value })}
-                            />
+                            <>
+                              <label className={`label ${hasError ? 'text-red-700' : ''}`}>
+                                {field.label} {field.required && '*'}
+                              </label>
+                              {field.type === 'select' ? (
+                                <select
+                                  className={`input ${hasError ? 'input-error' : ''}`}
+                                  value={String(answers[field.key] ?? '')}
+                                  onChange={(e) => setAnswers({ ...answers, [field.key]: e.target.value })}
+                                >
+                                  <option value="">— wybierz —</option>
+                                  {field.options.map((option) => (
+                                    <option key={option} value={option}>
+                                      {option}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <input
+                                  className={`input ${hasError ? 'input-error' : ''}`}
+                                  type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}
+                                  value={String(answers[field.key] ?? '')}
+                                  onChange={(e) => setAnswers({ ...answers, [field.key]: e.target.value })}
+                                />
+                              )}
+                            </>
                           )}
-                        </>
-                      )}
-                      {hasError && <p className="mt-1 text-xs text-red-600">{fieldErrors[field.key]}</p>}
-                    </div>
-                  );
-                })}
+                          {hasError && <p className="mt-1 text-xs text-red-600">{fieldErrors[field.key]}</p>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
               </section>
             )}
 

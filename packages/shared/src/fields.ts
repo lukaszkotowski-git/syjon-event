@@ -3,6 +3,7 @@ import {
   MAX_CUSTOM_SCRIPT_LENGTH,
   MAX_FIELDS_PER_FORM,
   MAX_OPTIONS_PER_SELECT,
+  MAX_SECTIONS_PER_FORM,
   MAX_TEXT_LENGTH,
 } from './constants.js';
 import { normalizePlPhone } from './phone.js';
@@ -48,9 +49,19 @@ export const fieldDefinitionSchema = z.discriminatedUnion('type', [
 
 export type FieldDefinition = z.infer<typeof fieldDefinitionSchema>;
 
+const sectionIdSchema = z.string().min(1).max(64);
+
+export const formSection = z.object({
+  id: sectionIdSchema,
+  name: z.string().min(1).max(200),
+  fields: z.array(fieldDefinitionSchema).default([]),
+});
+
+export type FormSection = z.infer<typeof formSection>;
+
 export const formSchemaJson = z
   .object({
-    fields: z.array(fieldDefinitionSchema).max(MAX_FIELDS_PER_FORM).default([]),
+    sections: z.array(formSection).max(MAX_SECTIONS_PER_FORM).default([]),
     /**
      * Własny kod JS uruchamiany na stronie publicznego formularza (np. ukrywanie sekcji
      * w zależności od kontekstu). Konfigurowany tylko w panelu admina — nigdy nie jest
@@ -59,22 +70,52 @@ export const formSchemaJson = z
     customScript: z.string().max(MAX_CUSTOM_SCRIPT_LENGTH).optional(),
   })
   .superRefine((value, ctx) => {
-    const seen = new Set<string>();
-    for (const field of value.fields) {
-      if (seen.has(field.key)) {
+    const seenSectionIds = new Set<string>();
+    let totalFields = 0;
+
+    for (const section of value.sections) {
+      if (seenSectionIds.has(section.id)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: `Zduplikowany klucz pola: ${field.key}`,
-          path: ['fields'],
+          message: `Zduplikowane id sekcji: ${section.id}`,
+          path: ['sections'],
         });
       }
-      seen.add(field.key);
+      seenSectionIds.add(section.id);
+      totalFields += section.fields.length;
+    }
+
+    if (totalFields > MAX_FIELDS_PER_FORM) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Zbyt wiele pól: maksymalnie ${MAX_FIELDS_PER_FORM} na formularz`,
+        path: ['sections'],
+      });
+    }
+
+    const seenKeys = new Set<string>();
+    for (const section of value.sections) {
+      for (const field of section.fields) {
+        if (seenKeys.has(field.key)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Zduplikowany klucz pola: ${field.key}`,
+            path: ['sections'],
+          });
+        }
+        seenKeys.add(field.key);
+      }
     }
   });
 
 export type FormSchemaJson = z.infer<typeof formSchemaJson>;
 
-export const EMPTY_FORM_SCHEMA: FormSchemaJson = { fields: [] };
+export const EMPTY_FORM_SCHEMA: FormSchemaJson = { sections: [] };
+
+/** Spłaszcza pola ze wszystkich sekcji — do walidacji odpowiedzi i eksportu, gdzie kolejność sekcji nie ma znaczenia. */
+export function flattenSections(sections: FormSection[]): FieldDefinition[] {
+  return sections.flatMap((section) => section.fields);
+}
 
 /** Wartość pojedynczej odpowiedzi po walidacji. */
 export type AnswerValue = string | number | boolean;

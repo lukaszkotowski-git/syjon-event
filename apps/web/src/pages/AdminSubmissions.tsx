@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import type { FieldDefinition } from '@syjonevent/shared';
+import { flattenSections, type FormSection } from '@syjonevent/shared';
 import { api, ApiError, formatDateTime, formatPln } from '../lib/api';
 
 interface SubmissionRow {
@@ -23,7 +23,7 @@ interface SubmissionDetail {
   ticketPriceCents: number;
   status: SubmissionRow['status'];
   payloadJson: Record<string, string | number | boolean>;
-  schemaSnapshotJson: { fields: FieldDefinition[] };
+  schemaSnapshotJson: { sections: FormSection[] };
   createdAt: string;
 }
 
@@ -211,10 +211,10 @@ export default function AdminSubmissions() {
             </div>
           </div>
 
-          {detail.schemaSnapshotJson.fields.length > 0 && (
+          {flattenSections(detail.schemaSnapshotJson.sections).length > 0 && (
             <div className="space-y-3">
               <p className="label">Odpowiedzi</p>
-              {detail.schemaSnapshotJson.fields.map((field) => (
+              {flattenSections(detail.schemaSnapshotJson.sections).map((field) => (
                 <div key={field.key}>
                   {field.type === 'checkbox' ? (
                     <label className="flex items-center gap-2 text-sm">

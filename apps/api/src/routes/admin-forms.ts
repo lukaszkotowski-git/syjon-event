@@ -5,13 +5,14 @@ import { z } from 'zod';
 import {
   buildAnswersSchema,
   createFormRequest,
+  EMPTY_FORM_SCHEMA,
+  flattenSections,
   formSchemaJson,
   MAX_TICKET_TYPES_PER_FORM,
   ticketTypeInput,
   updateFormRequest,
   updateSubmissionRequest,
   updateTicketTypeRequest,
-  type FieldDefinition,
 } from '@syjonevent/shared';
 import { requireAdmin } from '../auth/middleware.js';
 import { asyncHandler } from '../http/async-handler.js';
@@ -89,7 +90,7 @@ adminFormsRouter.post(
           paymentSuccessBody: body.paymentSuccessBody ?? null,
           paymentErrorTitle: body.paymentErrorTitle ?? null,
           paymentErrorBody: body.paymentErrorBody ?? null,
-          schemaJson: (body.schemaJson ?? { fields: [] }) as object,
+          schemaJson: (body.schemaJson ?? EMPTY_FORM_SCHEMA) as object,
         },
       });
       res.status(201).json({ form });
@@ -355,7 +356,7 @@ adminFormsRouter.get(
     const labels = new Map<string, string>();
     for (const submission of submissions) {
       const snapshot = parseFormSchema(submission.schemaSnapshotJson);
-      for (const field of snapshot.fields as FieldDefinition[]) {
+      for (const field of flattenSections(snapshot.sections)) {
         if (!labels.has(field.key)) {
           labels.set(field.key, field.label);
           dynamicKeys.push(field.key);
@@ -447,7 +448,7 @@ adminFormsRouter.patch(
         // Odpowiedzi walidujemy tym samym schematem co przy rejestracji — ten sam
         // snapshot pól, który obowiązywał w momencie zgłoszenia.
         ...(body.answers !== undefined
-          ? { payloadJson: buildAnswersSchema(schema.fields as FieldDefinition[]).parse(body.answers) as object }
+          ? { payloadJson: buildAnswersSchema(flattenSections(schema.sections)).parse(body.answers) as object }
           : {}),
       },
     });

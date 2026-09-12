@@ -1,6 +1,8 @@
 import type { Form, Submission, TicketType } from '@prisma/client';
 import {
   buildAnswersSchema,
+  EMPTY_FORM_SCHEMA,
+  flattenSections,
   formSchemaJson,
   MIN_PAID_AMOUNT_CENTS,
   type CreateSubmissionRequest,
@@ -12,8 +14,8 @@ import { generatePublicToken, hashPublicToken } from '../utils/tokens.js';
 import { checkAvailability, lockForm } from './capacity.js';
 
 export function parseFormSchema(raw: unknown) {
-  const parsed = formSchemaJson.safeParse(raw ?? { fields: [] });
-  return parsed.success ? parsed.data : { fields: [] };
+  const parsed = formSchemaJson.safeParse(raw ?? EMPTY_FORM_SCHEMA);
+  return parsed.success ? parsed.data : EMPTY_FORM_SCHEMA;
 }
 
 /** Formularz jest publicznie dostępny tylko jako PUBLISHED przed closes_at. */
@@ -40,7 +42,7 @@ export async function createRegistration(
   const schema = parseFormSchema(form.schemaJson);
 
   // Walidacja odpowiedzi po stronie serwera tym samym kodem, co na froncie.
-  const answers = buildAnswersSchema(schema.fields).parse(body.answers);
+  const answers = buildAnswersSchema(flattenSections(schema.sections)).parse(body.answers);
 
   if (form.requirePhone && !body.buyer.phone) {
     throw badRequest('Numer telefonu jest wymagany dla tego wydarzenia');
