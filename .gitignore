@@ -6,3 +6,4 @@ dist
 *.tsbuildinfo
 .claude/settings.local.json
 apps/api/uploads
+.DS_Store

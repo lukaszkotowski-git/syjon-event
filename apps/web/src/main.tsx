@@ -9,10 +9,12 @@ import AdminLogin from './pages/AdminLogin';
 import AdminSubmissions from './pages/AdminSubmissions';
 import Confirmation from './pages/Confirmation';
 import Home from './pages/Home';
+import PaymentMethods from './pages/PaymentMethods';
 import PublicForm from './pages/PublicForm';
 
 const router = createBrowserRouter([
   { path: '/', element: <Home /> },
+  { path: '/platnosci', element: <PaymentMethods /> },
   { path: '/f/:slug', element: <PublicForm /> },
   { path: '/potwierdzenie/:submissionId', element: <Confirmation /> },
   { path: '/admin/login', element: <AdminLogin /> },
