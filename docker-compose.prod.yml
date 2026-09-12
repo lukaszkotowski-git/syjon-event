@@ -32,6 +32,12 @@ services:
       PAYNOW_API_KEY: ${PAYNOW_API_KEY}
       PAYNOW_SIGNATURE_KEY: ${PAYNOW_SIGNATURE_KEY}
       PAYNOW_VALIDITY_SECONDS: ${PAYNOW_VALIDITY_SECONDS:-900}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      MAIL_FROM: ${MAIL_FROM}
     depends_on:
       db:
         condition: service_healthy

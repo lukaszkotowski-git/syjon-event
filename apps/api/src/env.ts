@@ -19,6 +19,17 @@ const envSchema = z.object({
     .min(60)
     .max(864_000)
     .default(DEFAULT_RESERVATION_SECONDS),
+  SMTP_HOST: z.string().min(1),
+  SMTP_PORT: z.coerce.number().int().positive().default(587),
+  // UWAGA: z.coerce.boolean() traktuje każdy niepusty string (w tym "false") jako true —
+  // trzeba porównać jawnie z wartością tekstową.
+  SMTP_SECURE: z
+    .string()
+    .default('false')
+    .transform((v) => v === 'true'),
+  SMTP_USER: z.string().min(1),
+  SMTP_PASSWORD: z.string().min(1),
+  MAIL_FROM: z.string().min(1),
 });
 
 export type Env = z.infer<typeof envSchema> & { PAYNOW_BASE_URL: string };

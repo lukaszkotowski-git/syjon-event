@@ -1,5 +1,6 @@
 import type { Payment, PaymentStatus, Submission } from '@prisma/client';
 import { env } from '../env.js';
+import { buildPaidConfirmationEmail, sendMail } from './mailer.js';
 import { createPayment, PaynowTransientError } from '../paynow/client.js';
 import { decideStatusUpdate } from '../paynow/status.js';
 import { prisma } from '../prisma.js';
@@ -81,14 +82,39 @@ export interface ApplyStatusInput {
 export type ApplyStatusResult =
   | { outcome: 'unknown-payment' }
   | { outcome: 'ignored'; reason: string }
-  | { outcome: 'applied'; paymentStatus: PaymentStatus; submissionPaid: boolean };
+  | { outcome: 'applied'; paymentStatus: PaymentStatus; submissionPaid: boolean; submissionId: string };
+
+/** Wysyła e-mail z potwierdzeniem zakupu — z idempotencją po `confirmationEmailSentAt`. */
+async function sendPaidConfirmationEmailIfNeeded(submissionId: string): Promise<void> {
+  const submission = await prisma.submission.findUnique({
+    where: { id: submissionId },
+    include: { form: true },
+  });
+  if (!submission || submission.confirmationEmailSentAt) return;
+
+  const { subject, html, text } = buildPaidConfirmationEmail({
+    formTitle: submission.form.title,
+    formSlug: submission.form.slug,
+    ticketName: submission.ticketNameSnapshot,
+    amountCents: submission.ticketPriceCents,
+    currency: submission.currency,
+  });
+
+  const sent = await sendMail(submission.buyerEmail, subject, html, text);
+  if (sent) {
+    await prisma.submission.update({
+      where: { id: submissionId },
+      data: { confirmationEmailSentAt: new Date() },
+    });
+  }
+}
 
 /**
  * Jedyne miejsce zmieniające status płatności — używane i przez webhook,
  * i przez fallbackowy status-check. Idempotentne i odporne na złą kolejność.
  */
 export async function applyProviderStatus(input: ApplyStatusInput): Promise<ApplyStatusResult> {
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const payment = await tx.payment.findUnique({
       where: { providerPaymentId: input.providerPaymentId },
       include: { submission: true },
@@ -141,8 +167,19 @@ export async function applyProviderStatus(input: ApplyStatusInput): Promise<Appl
 
     // REJECTED/ERROR/ABANDONED/EXPIRED nie kasują rezerwacji — retry jest możliwe
     // do końca reservation_expires_at.
-    return { outcome: 'applied', paymentStatus: input.incomingStatus, submissionPaid } as const;
+    return {
+      outcome: 'applied',
+      paymentStatus: input.incomingStatus,
+      submissionPaid,
+      submissionId: payment.submissionId,
+    } as const;
   });
+
+  if (result.outcome === 'applied' && result.submissionPaid) {
+    await sendPaidConfirmationEmailIfNeeded(result.submissionId);
+  }
+
+  return result;
 }
 
 export { PaynowTransientError };

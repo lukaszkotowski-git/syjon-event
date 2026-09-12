@@ -124,6 +124,7 @@ model Submission {
   status                       SubmissionStatus @map("status")
   reservationExpiresAt         DateTime?        @map("reservation_expires_at") @db.Timestamptz(3)
   publicTokenHash              String           @unique @map("public_token_hash")
+  confirmationEmailSentAt      DateTime?        @map("confirmation_email_sent_at") @db.Timestamptz(3)
   createdAt                    DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt                    DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 

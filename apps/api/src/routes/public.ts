@@ -9,6 +9,7 @@ import {
 import { asyncHandler } from '../http/async-handler.js';
 import { conflict, gone, notFound } from '../http/errors.js';
 import { getPaymentStatus } from '../paynow/client.js';
+import { buildFreeConfirmationEmail, sendMail } from '../services/mailer.js';
 import { prisma } from '../prisma.js';
 import { countOccupancy } from '../services/capacity.js';
 import {
@@ -90,6 +91,21 @@ publicRouter.post(
     const confirmation = confirmationUrl(submission.id, publicToken);
 
     if (submission.status === 'PAID') {
+      const { subject, html, text } = buildFreeConfirmationEmail({
+        formTitle: form.title,
+        ticketName: submission.ticketNameSnapshot,
+        amountCents: submission.ticketPriceCents,
+        currency: submission.currency,
+        confirmationUrl: confirmation,
+      });
+      const sent = await sendMail(submission.buyerEmail, subject, html, text);
+      if (sent) {
+        await prisma.submission.update({
+          where: { id: submission.id },
+          data: { confirmationEmailSentAt: new Date() },
+        });
+      }
+
       const response: CreateSubmissionResponse = {
         submissionId: submission.id,
         publicToken,
