@@ -4,6 +4,7 @@ import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import './index.css';
 import { ConfirmProvider } from './components/ui/ConfirmDialog';
 import { ToastProvider } from './components/ui/Toast';
+import AdminDashboard from './pages/AdminDashboard';
 import AdminFormEditor from './pages/AdminFormEditor';
 import AdminFormsList from './pages/AdminFormsList';
 import AdminLayout from './pages/AdminLayout';
@@ -25,6 +26,7 @@ const router = createBrowserRouter([
     element: <AdminLayout />,
     children: [
       { index: true, element: <AdminFormsList /> },
+      { path: 'statystyki', element: <AdminDashboard /> },
       { path: 'formularze/nowy', element: <AdminFormEditor /> },
       { path: 'formularze/:id', element: <AdminFormEditor /> },
       { path: 'formularze/:id/zgloszenia', element: <AdminSubmissions /> },

@@ -12,6 +12,14 @@ export function centsToPlnInput(cents: number): string {
   return (cents / 100).toFixed(2).replace('.', ',');
 }
 
+/** Polska odmiana liczebnika, np. plural(3, 'zgłoszenie', 'zgłoszenia', 'zgłoszeń') → "3 zgłoszenia". */
+export function plural(count: number, one: string, few: string, many: string): string {
+  if (count === 1) return `${count} ${one}`;
+  const lastDigit = count % 10;
+  const lastTwo = count % 100;
+  return `${count} ${lastDigit >= 2 && lastDigit <= 4 && (lastTwo < 12 || lastTwo > 14) ? few : many}`;
+}
+
 const DIACRITICS: Record<string, string> = { ł: 'l', Ł: 'l' };
 
 /** Tytuł → slug zgodny z walidacją API (małe litery, cyfry, pojedyncze myślniki). */

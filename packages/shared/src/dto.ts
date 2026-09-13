@@ -168,6 +168,48 @@ export interface PaymentResultContentDto {
   errorBody: string | null;
 }
 
+/* -------------------------------- dashboard -------------------------------- */
+
+export interface DashboardStatusCount {
+  status: 'RESERVED' | 'PAID' | 'EXPIRED' | 'CANCELLED';
+  count: number;
+}
+
+export interface DashboardEventStat {
+  formId: string;
+  title: string;
+  status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
+  submissionCount: number;
+  paidCount: number;
+  revenueCents: number;
+}
+
+export interface DashboardRecentRegistration {
+  id: string;
+  displayName: string | null;
+  buyerEmail: string;
+  formTitle: string;
+  status: 'RESERVED' | 'PAID' | 'EXPIRED' | 'CANCELLED';
+  createdAt: string;
+}
+
+export interface DashboardDto {
+  totals: {
+    submissions: number;
+    paid: number;
+    reserved: number;
+    expired: number;
+    cancelled: number;
+    revenueCents: number;
+    eventsPublished: number;
+    eventsDraft: number;
+    eventsArchived: number;
+  };
+  statusBreakdown: DashboardStatusCount[];
+  events: DashboardEventStat[];
+  recentRegistrations: DashboardRecentRegistration[];
+}
+
 export interface SubmissionStatusDto {
   submissionId: string;
   status: 'RESERVED' | 'PAID' | 'EXPIRED' | 'CANCELLED';

@@ -16,6 +16,7 @@ import {
   Users,
 } from 'lucide-react';
 import { api, ApiError, formatDateTime } from '../lib/api';
+import { plural } from '../lib/format';
 import { FORM_STATUS, type FormStatus } from '../lib/status';
 import { useConfirm } from '../components/ui/ConfirmDialog';
 import IconButton from '../components/ui/IconButton';
@@ -48,13 +49,6 @@ const TABS: { value: Tab; label: string }[] = [
 
 function isTab(value: string | null): value is Tab {
   return TABS.some((t) => t.value === value);
-}
-
-function plural(count: number, one: string, few: string, many: string) {
-  if (count === 1) return `${count} ${one}`;
-  const lastDigit = count % 10;
-  const lastTwo = count % 100;
-  return `${count} ${lastDigit >= 2 && lastDigit <= 4 && (lastTwo < 12 || lastTwo > 14) ? few : many}`;
 }
 
 export default function AdminFormsList() {
