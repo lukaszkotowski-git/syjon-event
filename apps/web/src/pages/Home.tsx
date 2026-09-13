@@ -1,6 +1,7 @@
 import { useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
+import { PRIVACY_POLICY_URL, TERMS_URL } from '../lib/legal';
 
 type EventIconType = 'fireworks' | 'beach' | 'ski' | 'disco' | 'camp' | 'picnic';
 
@@ -339,7 +340,7 @@ export default function Home() {
               Sposoby płatności
             </Link>
             <a
-              href={encodeURI('/Polityka prywatnosci 27.04.2026.pdf')}
+              href={PRIVACY_POLICY_URL}
               target="_blank"
               rel="noopener noreferrer"
               className="hover:text-brand-700 hover:underline"
@@ -347,7 +348,7 @@ export default function Home() {
               Polityka prywatności
             </a>
             <a
-              href={encodeURI('/Regulamin serwisu internetowego 5.05.2026.pdf')}
+              href={TERMS_URL}
               target="_blank"
               rel="noopener noreferrer"
               className="hover:text-brand-700 hover:underline"

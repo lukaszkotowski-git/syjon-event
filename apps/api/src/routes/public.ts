@@ -208,6 +208,9 @@ publicRouter.get(
         errorTitle: submissionRecord.form.paymentErrorTitle,
         errorBody: submissionRecord.form.paymentErrorBody,
       },
+      formTitle: submissionRecord.form.title,
+      formSlug: submissionRecord.form.slug,
+      confirmationEmailSent: fresh.confirmationEmailSentAt !== null,
     };
     res.json(dto);
   }),

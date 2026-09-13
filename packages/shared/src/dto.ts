@@ -180,4 +180,7 @@ export interface SubmissionStatusDto {
   } | null;
   canRetry: boolean;
   paymentResultContent: PaymentResultContentDto;
+  formTitle: string;
+  formSlug: string;
+  confirmationEmailSent: boolean;
 }
