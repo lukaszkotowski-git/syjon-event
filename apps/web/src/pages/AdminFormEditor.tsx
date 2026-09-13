@@ -53,6 +53,7 @@ interface FormDetails {
   title: string;
   description: string | null;
   status: FormStatus;
+  eventDate: string;
   closesAt: string;
   capacityTotal: number | null;
   requirePhone: boolean;
@@ -79,6 +80,7 @@ interface Draft {
   slug: string;
   title: string;
   description: string;
+  eventDate: string;
   closesAt: string;
   capacityTotal: string;
   requirePhone: boolean;
@@ -123,6 +125,7 @@ function emptyState(): EditorState {
       slug: '',
       title: '',
       description: '',
+      eventDate: toLocalInput(new Date(Date.now() + 30 * 86_400_000).toISOString()),
       closesAt: toLocalInput(new Date(Date.now() + 30 * 86_400_000).toISOString()),
       capacityTotal: '',
       requirePhone: false,
@@ -147,6 +150,7 @@ function stateFromForm(form: FormDetails): EditorState {
       slug: form.slug,
       title: form.title,
       description: form.description ?? '',
+      eventDate: toLocalInput(form.eventDate),
       closesAt: toLocalInput(form.closesAt),
       capacityTotal: form.capacityTotal?.toString() ?? '',
       requirePhone: form.requirePhone,
@@ -356,6 +360,7 @@ export default function AdminFormEditor() {
       slug: draft.slug,
       title: draft.title,
       description: draft.description || null,
+      eventDate: new Date(draft.eventDate).toISOString(),
       closesAt: new Date(draft.closesAt).toISOString(),
       capacityTotal: draft.capacityTotal === '' ? null : Number(draft.capacityTotal),
       requirePhone: draft.requirePhone,
@@ -708,7 +713,20 @@ export default function AdminFormEditor() {
               <RichTextEditor value={draft.description} onChange={(html) => setField('description', html)} />
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <div>
+                <label className="label" htmlFor="form-event-date">
+                  Data wydarzenia
+                </label>
+                <input
+                  id="form-event-date"
+                  type="datetime-local"
+                  className="input"
+                  value={draft.eventDate}
+                  required
+                  onChange={(e) => setField('eventDate', e.target.value)}
+                />
+              </div>
               <div>
                 <label className="label" htmlFor="form-closes">
                   Zamknięcie zapisów

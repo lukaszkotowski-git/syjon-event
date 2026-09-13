@@ -66,6 +66,7 @@ model Form {
   status               FormStatus @default(DRAFT)
   schemaJson           Json       @default("{\"fields\":[]}") @map("schema_json")
   capacityTotal        Int?       @map("capacity_total")
+  eventDate            DateTime   @map("event_date") @db.Timestamptz(3)
   closesAt             DateTime   @map("closes_at") @db.Timestamptz(3)
   requirePhone         Boolean    @default(false) @map("require_phone")
   termsVersion         String     @default("1.0") @map("terms_version")

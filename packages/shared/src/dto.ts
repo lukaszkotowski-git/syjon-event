@@ -30,6 +30,7 @@ export const createFormRequest = z.object({
   title: z.string().trim().min(1).max(200),
   // HTML wzbogaconego opisu z edytora (pogrubienie, kolor, wstawiony własny kod HTML).
   description: z.string().trim().max(MAX_DESCRIPTION_LENGTH).nullish(),
+  eventDate: z.string().datetime({ offset: true }),
   closesAt: z.string().datetime({ offset: true }),
   capacityTotal: z.number().int().positive().nullish(),
   requirePhone: z.boolean().default(false),
@@ -138,6 +139,7 @@ export interface PublicFormDto {
   slug: string;
   title: string;
   description: string | null;
+  eventDate: string;
   closesAt: string;
   requirePhone: boolean;
   termsVersion: string;

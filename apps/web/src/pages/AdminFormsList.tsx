@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Archive,
   CalendarClock,
+  CalendarDays,
   CalendarPlus,
   CircleCheck,
   Copy,
@@ -26,6 +27,7 @@ interface FormRow {
   slug: string;
   title: string;
   status: FormStatus;
+  eventDate: string;
   closesAt: string;
   isOpen: boolean;
   capacityTotal: number | null;
@@ -289,11 +291,17 @@ export default function AdminFormsList() {
                 </div>
 
                 <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-600">
-                  <span className="inline-flex items-center gap-1.5" title="Zamknięcie zapisów">
-                    <CalendarClock className="h-4 w-4 text-slate-400" aria-hidden />
-                    {closed ? 'Zapisy zamknięte ' : 'Zapisy do '}
-                    {formatDateTime(form.closesAt)}
+                  <span className="inline-flex items-center gap-1.5" title="Data wydarzenia">
+                    <CalendarDays className="h-4 w-4 text-slate-400" aria-hidden />
+                    {formatDateTime(form.eventDate)}
                   </span>
+                  {form.status === 'PUBLISHED' && (
+                    <span className="inline-flex items-center gap-1.5 text-slate-400" title="Zamknięcie zapisów">
+                      <CalendarClock className="h-4 w-4" aria-hidden />
+                      {closed ? 'Zapisy zamknięte ' : 'Zapisy do '}
+                      {formatDateTime(form.closesAt)}
+                    </span>
+                  )}
                   <span className="inline-flex items-center gap-1.5">
                     <CircleCheck className="h-4 w-4 text-emerald-500" aria-hidden />
                     {plural(form.paidCount, 'opłacone', 'opłacone', 'opłaconych')}

@@ -54,6 +54,7 @@ publicRouter.get(
       slug: form.slug,
       title: form.title,
       description: form.description,
+      eventDate: form.eventDate.toISOString(),
       closesAt: form.closesAt.toISOString(),
       requirePhone: form.requirePhone,
       termsVersion: form.termsVersion,
