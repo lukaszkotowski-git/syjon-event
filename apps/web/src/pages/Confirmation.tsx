@@ -3,6 +3,7 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import type { SubmissionStatusDto } from '@syjonevent/shared';
 import { api, ApiError, formatPln } from '../lib/api';
 import Stepper from '../components/Stepper';
+import { paymentStatusLabel } from '../lib/status';
 
 const POLL_INTERVAL_MS = 4000;
 const MAX_POLLS = 15;
@@ -169,7 +170,7 @@ export default function Confirmation() {
               . Strona odświeża status automatycznie.
             </p>
             <p className="text-sm text-slate-500">
-              Ostatnia próba płatności: {status.lastPayment?.status ?? 'brak'}
+              Ostatnia próba płatności: {paymentStatusLabel(status.lastPayment?.status)}
             </p>
             {status.canRetry && (
               <button className="btn-primary" onClick={retry} disabled={busy}>

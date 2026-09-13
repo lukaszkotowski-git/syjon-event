@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { Bold, Code, Italic, RemoveFormatting, type LucideIcon } from 'lucide-react';
+import IconButton from './ui/IconButton';
 
 interface Props {
   value: string;
@@ -44,37 +46,38 @@ export default function RichTextEditor({ value, onChange }: Props) {
     setShowHtmlBox(false);
   }
 
-  const toolbarButton = (label: ReactNode, onClick: () => void) => (
-    <button
-      type="button"
-      className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium hover:bg-slate-50"
+  const toolbarButton = (icon: LucideIcon, label: string, onClick: () => void, active = false) => (
+    <IconButton
+      icon={icon}
+      label={label}
+      aria-pressed={active || undefined}
+      className={active ? '!border-brand-200 !bg-brand-50 !text-brand-700' : ''}
       onMouseDown={(e) => e.preventDefault()}
       onClick={onClick}
-    >
-      {label}
-    </button>
+    />
   );
 
   return (
     <div>
       <div className="mb-2 flex flex-wrap items-center gap-1.5">
-        {toolbarButton(<b>B</b>, () => exec('bold'))}
-        {toolbarButton(<i>I</i>, () => exec('italic'))}
-        {toolbarButton('Wyczyść styl', () => exec('removeFormat'))}
+        {toolbarButton(Bold, 'Pogrubienie', () => exec('bold'))}
+        {toolbarButton(Italic, 'Kursywa', () => exec('italic'))}
+        {toolbarButton(RemoveFormatting, 'Wyczyść formatowanie', () => exec('removeFormat'))}
         <span className="mx-1 h-5 w-px bg-slate-200" />
         {COLORS.map((c) => (
           <button
             key={c.value}
             type="button"
-            title={c.label}
-            className="h-6 w-6 rounded-full border border-slate-300"
+            title={`Kolor: ${c.label}`}
+            aria-label={`Kolor tekstu: ${c.label}`}
+            className="h-6 w-6 rounded-full border border-slate-300 transition hover:scale-110"
             style={{ backgroundColor: c.value }}
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => exec('foreColor', c.value)}
           />
         ))}
         <span className="mx-1 h-5 w-px bg-slate-200" />
-        {toolbarButton(showHtmlBox ? 'Anuluj HTML' : 'Wstaw HTML', () => setShowHtmlBox((s) => !s))}
+        {toolbarButton(Code, showHtmlBox ? 'Zamknij wstawianie HTML' : 'Wstaw własny HTML', () => setShowHtmlBox((s) => !s), showHtmlBox)}
       </div>
 
       {showHtmlBox && (

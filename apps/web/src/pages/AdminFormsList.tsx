@@ -1,12 +1,17 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Lock } from 'lucide-react';
 import { api, ApiError, formatDateTime } from '../lib/api';
+import { FORM_STATUS, type FormStatus } from '../lib/status';
+import { useConfirm } from '../components/ui/ConfirmDialog';
+import StatusBadge from '../components/ui/StatusBadge';
+import { useToast } from '../components/ui/Toast';
 
 interface FormRow {
   id: string;
   slug: string;
   title: string;
-  status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
+  status: FormStatus;
   closesAt: string;
   isOpen: boolean;
   capacityTotal: number | null;
@@ -14,34 +19,36 @@ interface FormRow {
   reservedCount: number;
 }
 
-const statusStyle: Record<FormRow['status'], string> = {
-  DRAFT: 'bg-slate-100 text-slate-700',
-  PUBLISHED: 'bg-emerald-100 text-emerald-700',
-  ARCHIVED: 'bg-amber-100 text-amber-800',
-};
-
 export default function AdminFormsList() {
   const [forms, setForms] = useState<FormRow[] | null>(null);
-  const [confirmId, setConfirmId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [errorById, setErrorById] = useState<Record<string, string>>({});
+  const toast = useToast();
+  const confirm = useConfirm();
 
   useEffect(() => {
     api.get<{ forms: FormRow[] }>('/api/forms').then((data) => setForms(data.forms));
   }, []);
 
-  async function deleteForm(id: string) {
-    setBusyId(id);
-    setErrorById((prev) => ({ ...prev, [id]: '' }));
+  async function deleteForm(form: FormRow) {
+    const confirmed = await confirm({
+      title: 'Usunąć wydarzenie?',
+      description: (
+        <>
+          <strong className="font-medium text-slate-800">{form.title}</strong> zostanie trwale usunięte. Tej operacji
+          nie można cofnąć.
+        </>
+      ),
+      confirmLabel: 'Usuń wydarzenie',
+      tone: 'danger',
+    });
+    if (!confirmed) return;
+    setBusyId(form.id);
     try {
-      await api.delete(`/api/forms/${id}`);
-      setForms((prev) => prev?.filter((f) => f.id !== id) ?? prev);
-      setConfirmId(null);
+      await api.delete(`/api/forms/${form.id}`);
+      setForms((prev) => prev?.filter((f) => f.id !== form.id) ?? prev);
+      toast.success('Wydarzenie usunięte');
     } catch (error) {
-      setErrorById((prev) => ({
-        ...prev,
-        [id]: error instanceof ApiError ? error.message : 'Nie udało się usunąć wydarzenia',
-      }));
+      toast.error(error instanceof ApiError ? error.message : 'Nie udało się usunąć wydarzenia');
     } finally {
       setBusyId(null);
     }
@@ -65,17 +72,27 @@ export default function AdminFormsList() {
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <h2 className="truncate font-medium">{form.title}</h2>
-                <span className={`badge ${statusStyle[form.status]}`}>{form.status}</span>
+                <StatusBadge meta={FORM_STATUS[form.status]} />
                 {!form.isOpen && form.status === 'PUBLISHED' && (
-                  <span className="badge bg-red-100 text-red-700">zamknięty</span>
+                  <StatusBadge meta={{ label: 'Zapisy zamknięte', icon: Lock, className: 'bg-red-100 text-red-700' }} />
                 )}
               </div>
-              <p className="mt-1 text-sm text-slate-500">
-                /f/{form.slug} · zamknięcie {formatDateTime(form.closesAt)} · opłacone {form.paidCount}
-                {form.capacityTotal !== null ? ` / ${form.capacityTotal}` : ''} · rezerwacje{' '}
-                {form.reservedCount}
-              </p>
-              {errorById[form.id] && <p className="mt-1.5 text-sm text-red-600">{errorById[form.id]}</p>}
+              <p className="mt-1 font-mono text-xs text-slate-400">/f/{form.slug}</p>
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-600">
+                <span>
+                  <span className="text-slate-400">Zamknięcie: </span>
+                  {formatDateTime(form.closesAt)}
+                </span>
+                <span>
+                  <span className="text-slate-400">Opłacone: </span>
+                  {form.paidCount}
+                  {form.capacityTotal !== null ? ` / ${form.capacityTotal}` : ''}
+                </span>
+                <span>
+                  <span className="text-slate-400">Rezerwacje: </span>
+                  {form.reservedCount}
+                </span>
+              </div>
             </div>
             <div className="flex gap-2">
               <Link to={`/admin/formularze/${form.id}`} className="btn-secondary">
@@ -84,29 +101,14 @@ export default function AdminFormsList() {
               <Link to={`/admin/formularze/${form.id}/zgloszenia`} className="btn-secondary">
                 Zgłoszenia
               </Link>
-              {confirmId === form.id ? (
-                <>
-                  <button
-                    type="button"
-                    className="btn-secondary text-red-600"
-                    disabled={busyId === form.id}
-                    onClick={() => deleteForm(form.id)}
-                  >
-                    {busyId === form.id ? 'Usuwanie…' : 'Na pewno usuń'}
-                  </button>
-                  <button type="button" className="btn-ghost" onClick={() => setConfirmId(null)}>
-                    Anuluj
-                  </button>
-                </>
-              ) : (
-                <button
-                  type="button"
-                  className="btn-secondary text-red-600"
-                  onClick={() => setConfirmId(form.id)}
-                >
-                  Usuń
-                </button>
-              )}
+              <button
+                type="button"
+                className="btn-secondary text-red-600"
+                disabled={busyId === form.id}
+                onClick={() => deleteForm(form)}
+              >
+                {busyId === form.id ? 'Usuwanie…' : 'Usuń'}
+              </button>
             </div>
           </article>
         ))}

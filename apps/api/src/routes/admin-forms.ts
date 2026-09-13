@@ -343,13 +343,15 @@ adminFormsRouter.get(
     const form = await getFormOr404(req.params.id as string);
     const query = submissionQuery.parse(req.query);
 
-    const where = {
+    // Liczniki zakładek statusów i przychód liczymy bez filtra statusu (ale z wyszukiwaniem),
+    // żeby zakładki pokazywały, ile wyników jest w każdej z nich.
+    const baseWhere = {
       formId: form.id,
-      ...(query.status ? { status: query.status } : {}),
       ...(query.email ? { buyerEmail: { contains: query.email.toLowerCase() } } : {}),
     };
+    const where = { ...baseWhere, ...(query.status ? { status: query.status } : {}) };
 
-    const [total, submissions] = await Promise.all([
+    const [total, submissions, grouped] = await Promise.all([
       prisma.submission.count({ where }),
       prisma.submission.findMany({
         where,
@@ -368,9 +370,29 @@ adminFormsRouter.get(
           createdAt: true,
         },
       }),
+      prisma.submission.groupBy({
+        by: ['status'],
+        where: baseWhere,
+        _count: { _all: true },
+        _sum: { ticketPriceCents: true },
+      }),
     ]);
 
-    res.json({ total, page: query.page, pageSize: query.pageSize, submissions });
+    const statusCounts = { RESERVED: 0, PAID: 0, EXPIRED: 0, CANCELLED: 0 };
+    let paidRevenueCents = 0;
+    for (const row of grouped) {
+      statusCounts[row.status] = row._count._all;
+      if (row.status === 'PAID') paidRevenueCents = row._sum.ticketPriceCents ?? 0;
+    }
+
+    res.json({
+      total,
+      page: query.page,
+      pageSize: query.pageSize,
+      submissions,
+      statusCounts,
+      paidRevenueCents,
+    });
   }),
 );
 
