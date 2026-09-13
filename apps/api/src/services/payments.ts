@@ -98,6 +98,8 @@ async function sendPaidConfirmationEmailIfNeeded(submissionId: string): Promise<
     ticketName: submission.ticketNameSnapshot,
     amountCents: submission.ticketPriceCents,
     currency: submission.currency,
+    customTitle: submission.form.confirmationEmailTitle,
+    customBody: submission.form.confirmationEmailBody,
   });
 
   const sent = await sendMail(submission.buyerEmail, subject, html, text);

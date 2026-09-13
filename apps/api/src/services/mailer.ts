@@ -34,6 +34,9 @@ interface TicketEmailData {
   ticketName: string;
   amountCents: number;
   currency: string;
+  /** Ustawiane przez organizatora w edytorze formularza — nadpisują domyślny tytuł/treść. */
+  customTitle?: string | null;
+  customBody?: string | null;
 }
 
 function escapeHtml(value: string): string {
@@ -41,6 +44,20 @@ function escapeHtml(value: string): string {
     /[&<>"']/g,
     (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string,
   );
+}
+
+function resolveTitle(defaultTitle: string, customTitle: string | null | undefined): string {
+  return customTitle?.trim() || defaultTitle;
+}
+
+/** Własna treść (textarea, zwykły tekst) renderowana jako akapit z zachowanymi złamaniami linii. */
+function introHtml(defaultText: string, customBody: string | null | undefined): string {
+  const text = customBody?.trim() || defaultText;
+  return `<p style="margin:0 0 12px;font-size:15px;line-height:1.5;">${escapeHtml(text).replace(/\n/g, '<br />')}</p>`;
+}
+
+function introText(defaultText: string, customBody: string | null | undefined): string {
+  return customBody?.trim() || defaultText;
 }
 
 function baseUrl(): string {
@@ -112,21 +129,27 @@ interface EmailContent {
 
 /** Bilet bezpłatny — e-mail wysyłany synchronicznie tuż po rejestracji, może zawierać link ze statusem. */
 export function buildFreeConfirmationEmail(data: TicketEmailData & { confirmationUrl: string }): EmailContent {
-  const subject = `Potwierdzenie rejestracji — ${data.formTitle}`;
+  const heading = resolveTitle('Rejestracja potwierdzona', data.customTitle);
+  const subject = data.customTitle?.trim()
+    ? `${heading} — ${data.formTitle}`
+    : `Potwierdzenie rejestracji — ${data.formTitle}`;
+  const defaultIntro = 'Twoja rejestracja na wydarzenie została potwierdzona. Poniżej znajdziesz szczegóły zgłoszenia.';
   const bodyHtml = [
-    `<p style="margin:0 0 12px;font-size:15px;line-height:1.5;">Twoja rejestracja na wydarzenie została potwierdzona. Poniżej znajdziesz szczegóły zgłoszenia.</p>`,
+    introHtml(defaultIntro, data.customBody),
     ticketDetailsHtml(data),
     buttonHtml(data.confirmationUrl, 'Sprawdź status zgłoszenia'),
     `<p style="margin:16px 0 0;font-size:13px;color:#5b7a7d;">Zachowaj ten link — pod nim zawsze sprawdzisz status swojego zgłoszenia.</p>`,
   ].join('');
   const text = [
-    `Rejestracja potwierdzona — ${data.formTitle}`,
+    `${heading} — ${data.formTitle}`,
+    '',
+    introText(defaultIntro, data.customBody),
     '',
     `Bilet: ${data.ticketName} (${formatAmount(data.amountCents, data.currency)})`,
     '',
     `Status zgłoszenia: ${data.confirmationUrl}`,
   ].join('\n');
-  return { subject, html: shellHtml('Rejestracja potwierdzona', bodyHtml), text };
+  return { subject, html: shellHtml(heading, bodyHtml), text };
 }
 
 /**
@@ -136,19 +159,25 @@ export function buildFreeConfirmationEmail(data: TicketEmailData & { confirmatio
  * do publicznej strony wydarzenia.
  */
 export function buildPaidConfirmationEmail(data: TicketEmailData & { formSlug: string }): EmailContent {
-  const subject = `Potwierdzenie zakupu biletu — ${data.formTitle}`;
+  const heading = resolveTitle('Zakup potwierdzony', data.customTitle);
+  const subject = data.customTitle?.trim()
+    ? `${heading} — ${data.formTitle}`
+    : `Potwierdzenie zakupu biletu — ${data.formTitle}`;
   const eventUrl = `${baseUrl()}/f/${data.formSlug}`;
+  const defaultIntro = 'Twoja płatność została potwierdzona — bilet jest Twój! Poniżej znajdziesz szczegóły zakupu.';
   const bodyHtml = [
-    `<p style="margin:0 0 12px;font-size:15px;line-height:1.5;">Twoja płatność została potwierdzona — bilet jest Twój! Poniżej znajdziesz szczegóły zakupu.</p>`,
+    introHtml(defaultIntro, data.customBody),
     ticketDetailsHtml(data),
     buttonHtml(eventUrl, 'Zobacz stronę wydarzenia'),
   ].join('');
   const text = [
-    `Zakup potwierdzony — ${data.formTitle}`,
+    `${heading} — ${data.formTitle}`,
+    '',
+    introText(defaultIntro, data.customBody),
     '',
     `Bilet: ${data.ticketName} (${formatAmount(data.amountCents, data.currency)})`,
     '',
     `Strona wydarzenia: ${eventUrl}`,
   ].join('\n');
-  return { subject, html: shellHtml('Zakup potwierdzony', bodyHtml), text };
+  return { subject, html: shellHtml(heading, bodyHtml), text };
 }

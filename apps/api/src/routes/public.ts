@@ -96,6 +96,8 @@ publicRouter.post(
         ticketName: submission.ticketNameSnapshot,
         amountCents: submission.ticketPriceCents,
         currency: submission.currency,
+        customTitle: form.confirmationEmailTitle,
+        customBody: form.confirmationEmailBody,
         confirmationUrl: confirmation,
       });
       const sent = await sendMail(submission.buyerEmail, subject, html, text);

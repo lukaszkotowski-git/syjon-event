@@ -90,6 +90,8 @@ adminFormsRouter.post(
           paymentSuccessBody: body.paymentSuccessBody ?? null,
           paymentErrorTitle: body.paymentErrorTitle ?? null,
           paymentErrorBody: body.paymentErrorBody ?? null,
+          confirmationEmailTitle: body.confirmationEmailTitle ?? null,
+          confirmationEmailBody: body.confirmationEmailBody ?? null,
           schemaJson: (body.schemaJson ?? EMPTY_FORM_SCHEMA) as object,
         },
       });
@@ -148,6 +150,12 @@ adminFormsRouter.patch(
             : {}),
           ...(body.paymentErrorBody !== undefined
             ? { paymentErrorBody: body.paymentErrorBody ?? null }
+            : {}),
+          ...(body.confirmationEmailTitle !== undefined
+            ? { confirmationEmailTitle: body.confirmationEmailTitle ?? null }
+            : {}),
+          ...(body.confirmationEmailBody !== undefined
+            ? { confirmationEmailBody: body.confirmationEmailBody ?? null }
             : {}),
           ...(body.schemaJson !== undefined ? { schemaJson: body.schemaJson as object } : {}),
         },
