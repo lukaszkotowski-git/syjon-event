@@ -56,14 +56,50 @@ describe('walidacja odpowiedzi z definicji pól', () => {
 });
 
 describe('schemat formularza', () => {
-  test('zduplikowane klucze pól są odrzucane', () => {
+  test('zduplikowane klucze pól są odrzucane (w tej samej sekcji)', () => {
     const result = formSchemaJson.safeParse({
-      fields: [
-        { type: 'text', key: 'imie', label: 'Imię', required: true },
-        { type: 'text', key: 'imie', label: 'Imię 2', required: false },
+      sections: [
+        {
+          id: 'sekcja-1',
+          name: 'Dane',
+          fields: [
+            { type: 'text', key: 'imie', label: 'Imię', required: true },
+            { type: 'text', key: 'imie', label: 'Imię 2', required: false },
+          ],
+        },
       ],
     });
     assert.equal(result.success, false);
+  });
+
+  test('zduplikowane klucze pól są odrzucane (w różnych sekcjach)', () => {
+    const result = formSchemaJson.safeParse({
+      sections: [
+        { id: 'sekcja-1', name: 'Dane', fields: [{ type: 'text', key: 'imie', label: 'Imię', required: true }] },
+        { id: 'sekcja-2', name: 'Więcej', fields: [{ type: 'text', key: 'imie', label: 'Imię 2', required: false }] },
+      ],
+    });
+    assert.equal(result.success, false);
+  });
+
+  test('zduplikowane id sekcji jest odrzucane', () => {
+    const result = formSchemaJson.safeParse({
+      sections: [
+        { id: 'sekcja-1', name: 'Dane', fields: [] },
+        { id: 'sekcja-1', name: 'Dane 2', fields: [] },
+      ],
+    });
+    assert.equal(result.success, false);
+  });
+
+  test('unikalne klucze pól w różnych sekcjach przechodzą', () => {
+    const result = formSchemaJson.safeParse({
+      sections: [
+        { id: 'sekcja-1', name: 'Dane', fields: [{ type: 'text', key: 'imie', label: 'Imię', required: true }] },
+        { id: 'sekcja-2', name: 'Więcej', fields: [{ type: 'text', key: 'nazwisko', label: 'Nazwisko', required: true }] },
+      ],
+    });
+    assert.equal(result.success, true);
   });
 });
 
