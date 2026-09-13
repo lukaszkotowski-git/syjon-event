@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import {
   ArrowLeft,
   ArrowRight,
+  ChevronRight,
   CircleCheck,
   ClipboardCheck,
   ListChecks,
@@ -572,7 +573,7 @@ export default function PublicForm() {
                   {form.hasDiscountCodes && selectedTicket && selectedTicket.priceCents > 0 && (
                     <div>
                       {appliedDiscount ? (
-                        <div className="flex items-center justify-between gap-3 rounded-xl bg-emerald-50 px-4 py-3">
+                        <div className="flex items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3.5">
                           <p className="flex items-center gap-2 text-sm text-emerald-800">
                             <CircleCheck className="h-4 w-4 shrink-0" aria-hidden />
                             Kod <span className="font-mono font-semibold">{appliedDiscount.code}</span> zastosowany —
@@ -581,46 +582,59 @@ export default function PublicForm() {
                           <IconButton icon={X} label="Usuń kod rabatowy" size="sm" onClick={removeDiscountCode} />
                         </div>
                       ) : discountFieldOpen ? (
-                        <div className="flex items-start gap-2">
-                          <div className="flex-1">
-                            <label className="label" htmlFor="discount-code">
-                              Kod rabatowy
-                            </label>
-                            <input
-                              id="discount-code"
-                              className={`input font-mono uppercase ${discountError ? 'input-error' : ''}`}
-                              placeholder="np. WOLONTARIUSZ"
-                              value={discountCodeText}
-                              onChange={(e) => {
-                                setDiscountCodeText(e.target.value.toUpperCase());
-                                setDiscountError(null);
-                              }}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  e.preventDefault();
-                                  void applyDiscountCode();
-                                }
-                              }}
-                            />
-                            {discountError && <p className="mt-1 text-xs text-red-600">{discountError}</p>}
-                          </div>
-                          <button
-                            type="button"
-                            className="btn-secondary mt-6"
-                            onClick={() => void applyDiscountCode()}
-                            disabled={discountBusy || !discountCodeText.trim()}
+                        <div className="rounded-2xl border-2 border-brand-300 bg-brand-50/50 p-4">
+                          <label
+                            htmlFor="discount-code"
+                            className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-brand-900"
                           >
-                            {discountBusy ? 'Sprawdzam…' : 'Zastosuj'}
-                          </button>
+                            <TicketPercent className="h-4 w-4" aria-hidden />
+                            Masz kod rabatowy?
+                          </label>
+                          <div className="flex items-start gap-2">
+                            <div className="flex-1">
+                              <input
+                                id="discount-code"
+                                className={`input bg-white font-mono uppercase ${discountError ? 'input-error' : ''}`}
+                                placeholder="np. WOLONTARIUSZ"
+                                autoFocus
+                                value={discountCodeText}
+                                onChange={(e) => {
+                                  setDiscountCodeText(e.target.value.toUpperCase());
+                                  setDiscountError(null);
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    void applyDiscountCode();
+                                  }
+                                }}
+                              />
+                              {discountError && <p className="mt-1 text-xs text-red-600">{discountError}</p>}
+                            </div>
+                            <button
+                              type="button"
+                              className="btn-primary"
+                              onClick={() => void applyDiscountCode()}
+                              disabled={discountBusy || !discountCodeText.trim()}
+                            >
+                              {discountBusy ? 'Sprawdzam…' : 'Zastosuj'}
+                            </button>
+                          </div>
                         </div>
                       ) : (
                         <button
                           type="button"
-                          className="inline-flex items-center gap-1.5 text-sm font-medium text-brand-700 hover:text-brand-900"
+                          className="flex w-full items-center gap-3 rounded-2xl border-2 border-dashed border-brand-300 bg-brand-50/60 px-4 py-3.5 text-left transition hover:border-brand-400 hover:bg-brand-50"
                           onClick={() => setDiscountFieldOpen(true)}
                         >
-                          <TicketPercent className="h-4 w-4" aria-hidden />
-                          Mam kod rabatowy
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-100 text-brand-700">
+                            <TicketPercent className="h-5 w-5" aria-hidden />
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-sm font-semibold text-brand-900">Mam kod rabatowy</span>
+                            <span className="block text-xs text-brand-700/80">Wpisz kod i zapłać mniej za bilet</span>
+                          </span>
+                          <ChevronRight className="h-4 w-4 shrink-0 text-brand-400" aria-hidden />
                         </button>
                       )}
                     </div>
