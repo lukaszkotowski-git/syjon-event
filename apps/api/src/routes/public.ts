@@ -96,6 +96,8 @@ publicRouter.post(
         ticketName: submission.ticketNameSnapshot,
         amountCents: submission.ticketPriceCents,
         currency: submission.currency,
+        customTitle: form.confirmationEmailTitle,
+        customBody: form.confirmationEmailBody,
         confirmationUrl: confirmation,
       });
       const sent = await sendMail(submission.buyerEmail, subject, html, text);
@@ -206,6 +208,9 @@ publicRouter.get(
         errorTitle: submissionRecord.form.paymentErrorTitle,
         errorBody: submissionRecord.form.paymentErrorBody,
       },
+      formTitle: submissionRecord.form.title,
+      formSlug: submissionRecord.form.slug,
+      confirmationEmailSent: fresh.confirmationEmailSentAt !== null,
     };
     res.json(dto);
   }),

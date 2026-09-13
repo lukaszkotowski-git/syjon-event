@@ -1,11 +1,44 @@
-import { useEffect, useState, type FormEvent } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { Link, useBlocker, useNavigate, useParams } from 'react-router-dom';
+import {
+  Archive,
+  ArrowLeft,
+  CircleCheck,
+  CircleX,
+  Code,
+  Copy,
+  CreditCard,
+  Ellipsis,
+  ExternalLink,
+  Globe,
+  Image,
+  Info,
+  ListChecks,
+  LoaderCircle,
+  Mail,
+  Save,
+  Ticket,
+  TriangleAlert,
+  Users,
+  type LucideIcon,
+} from 'lucide-react';
 import type { FormSection } from '@syjonevent/shared';
-import SectionBuilder from '../components/SectionBuilder';
+import SectionBuilder, { sectionBuilderErrors } from '../components/SectionBuilder';
 import RichTextEditor from '../components/RichTextEditor';
-import { api, ApiError, formatPln } from '../lib/api';
+import BackgroundUploader from '../components/editor/BackgroundUploader';
+import EditorNav, { type NavSection } from '../components/editor/EditorNav';
+import TicketsEditor, { ticketError, type TicketDraft } from '../components/editor/TicketsEditor';
+import { useConfirm } from '../components/ui/ConfirmDialog';
+import IconButton from '../components/ui/IconButton';
+import Menu, { type MenuItem } from '../components/ui/Menu';
+import StatusBadge from '../components/ui/StatusBadge';
+import Switch from '../components/ui/Switch';
+import { useToast } from '../components/ui/Toast';
+import { api, ApiError } from '../lib/api';
+import { centsToPlnInput, normalizeHtml, parsePlnInput, slugify } from '../lib/format';
+import { FORM_STATUS, type FormStatus } from '../lib/status';
 
-interface Ticket {
+interface TicketDto {
   id: string;
   name: string;
   priceCents: number;
@@ -19,7 +52,7 @@ interface FormDetails {
   slug: string;
   title: string;
   description: string | null;
-  status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
+  status: FormStatus;
   closesAt: string;
   capacityTotal: number | null;
   requirePhone: boolean;
@@ -29,11 +62,54 @@ interface FormDetails {
   paymentSuccessBody: string | null;
   paymentErrorTitle: string | null;
   paymentErrorBody: string | null;
+  confirmationEmailTitle: string | null;
+  confirmationEmailBody: string | null;
   backgroundImageDesktopUrl: string | null;
   backgroundImageMobileUrl: string | null;
   schemaJson: { sections: FormSection[]; customScript?: string };
-  ticketTypes: Ticket[];
+  ticketTypes: TicketDto[];
 }
+
+interface Occupancy {
+  total: number;
+  perTicketType: Record<string, number>;
+}
+
+interface Draft {
+  slug: string;
+  title: string;
+  description: string;
+  closesAt: string;
+  capacityTotal: string;
+  requirePhone: boolean;
+  termsVersion: string;
+  privacyPolicyVersion: string;
+  paymentSuccessTitle: string;
+  paymentSuccessBody: string;
+  paymentErrorTitle: string;
+  paymentErrorBody: string;
+  confirmationEmailTitle: string;
+  confirmationEmailBody: string;
+}
+
+interface EditorState {
+  draft: Draft;
+  sections: FormSection[];
+  customScript: string;
+  tickets: TicketDraft[];
+}
+
+const NAV_SECTIONS: NavSection[] = [
+  { id: 'podstawowe', label: 'Podstawowe', icon: Info },
+  { id: 'bilety', label: 'Bilety', icon: Ticket },
+  { id: 'pola', label: 'Pola formularza', icon: ListChecks },
+  { id: 'wyglad', label: 'Wygląd', icon: Image },
+  { id: 'po-platnosci', label: 'Po płatności', icon: CreditCard },
+  { id: 'email', label: 'E-mail', icon: Mail },
+  { id: 'zaawansowane', label: 'Zaawansowane', icon: Code },
+];
+
+const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 
 const toLocalInput = (iso: string) => {
   const date = new Date(iso);
@@ -41,74 +117,235 @@ const toLocalInput = (iso: string) => {
   return new Date(date.getTime() - offset).toISOString().slice(0, 16);
 };
 
+function emptyState(): EditorState {
+  return {
+    draft: {
+      slug: '',
+      title: '',
+      description: '',
+      closesAt: toLocalInput(new Date(Date.now() + 30 * 86_400_000).toISOString()),
+      capacityTotal: '',
+      requirePhone: false,
+      termsVersion: '1.0',
+      privacyPolicyVersion: '1.0',
+      paymentSuccessTitle: '',
+      paymentSuccessBody: '',
+      paymentErrorTitle: '',
+      paymentErrorBody: '',
+      confirmationEmailTitle: '',
+      confirmationEmailBody: '',
+    },
+    sections: [],
+    customScript: '',
+    tickets: [],
+  };
+}
+
+function stateFromForm(form: FormDetails): EditorState {
+  return {
+    draft: {
+      slug: form.slug,
+      title: form.title,
+      description: form.description ?? '',
+      closesAt: toLocalInput(form.closesAt),
+      capacityTotal: form.capacityTotal?.toString() ?? '',
+      requirePhone: form.requirePhone,
+      termsVersion: form.termsVersion,
+      privacyPolicyVersion: form.privacyPolicyVersion,
+      paymentSuccessTitle: form.paymentSuccessTitle ?? '',
+      paymentSuccessBody: form.paymentSuccessBody ?? '',
+      paymentErrorTitle: form.paymentErrorTitle ?? '',
+      paymentErrorBody: form.paymentErrorBody ?? '',
+      confirmationEmailTitle: form.confirmationEmailTitle ?? '',
+      confirmationEmailBody: form.confirmationEmailBody ?? '',
+    },
+    sections: form.schemaJson.sections ?? [],
+    customScript: form.schemaJson.customScript ?? '',
+    tickets: [...form.ticketTypes]
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .map((t) => ({
+        key: t.id,
+        id: t.id,
+        name: t.name,
+        priceInput: centsToPlnInput(t.priceCents),
+        capacityInput: t.capacity?.toString() ?? '',
+        isActive: t.isActive,
+      })),
+  };
+}
+
+/** Porównywalny odcisk stanu edytora — różny od zapisanego = są niezapisane zmiany. */
+function snapshot(state: EditorState): string {
+  return JSON.stringify({
+    ...state.draft,
+    description: normalizeHtml(state.draft.description),
+    sections: state.sections,
+    customScript: state.customScript,
+    tickets: state.tickets.map(({ key: _key, priceInput, ...rest }) => ({
+      ...rest,
+      price: parsePlnInput(priceInput) ?? priceInput,
+    })),
+  });
+}
+
+function EditorCard({
+  id,
+  icon: Icon,
+  title,
+  description,
+  children,
+}: {
+  id: string;
+  icon: LucideIcon;
+  title: string;
+  description?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section id={id} className="card scroll-mt-16 space-y-5 lg:scroll-mt-6">
+      <header className="flex items-start gap-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-700">
+          <Icon className="h-5 w-5" aria-hidden />
+        </span>
+        <div className="min-w-0">
+          <h2 className="text-lg font-medium leading-tight">{title}</h2>
+          {description && <p className="mt-0.5 text-sm text-slate-500">{description}</p>}
+        </div>
+      </header>
+      {children}
+    </section>
+  );
+}
+
 export default function AdminFormEditor() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const toast = useToast();
+  const confirm = useConfirm();
   const isNew = !id;
+  const formRef = useRef<HTMLFormElement>(null);
 
+  const [initial] = useState(emptyState);
   const [form, setForm] = useState<FormDetails | null>(null);
-  const [sections, setSections] = useState<FormSection[]>([]);
-  const [customScript, setCustomScript] = useState('');
-  const [occupancy, setOccupancy] = useState<{ total: number; perTicketType: Record<string, number> }>({
-    total: 0,
-    perTicketType: {},
-  });
-  const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+  const [occupancy, setOccupancy] = useState<Occupancy>({ total: 0, perTicketType: {} });
+  const [draft, setDraft] = useState<Draft>(initial.draft);
+  const [sections, setSections] = useState<FormSection[]>(initial.sections);
+  const [customScript, setCustomScript] = useState(initial.customScript);
+  const [tickets, setTickets] = useState<TicketDraft[]>(initial.tickets);
+  const [savedSnapshot, setSavedSnapshot] = useState(() => snapshot(initial));
+  const [slugTouched, setSlugTouched] = useState(false);
+  const [showTicketErrors, setShowTicketErrors] = useState(false);
   const [busy, setBusy] = useState(false);
   const [backgroundBusy, setBackgroundBusy] = useState<'desktop' | 'mobile' | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // Po udanym zapisie nowego wydarzenia przechodzimy na jego adres — ta nawigacja nie może być blokowana.
+  const allowNavigationRef = useRef(false);
 
-  const [draft, setDraft] = useState({
-    slug: '',
-    title: '',
-    description: '',
-    closesAt: toLocalInput(new Date(Date.now() + 30 * 86_400_000).toISOString()),
-    capacityTotal: '',
-    requirePhone: false,
-    termsVersion: '1.0',
-    privacyPolicyVersion: '1.0',
-    paymentSuccessTitle: '',
-    paymentSuccessBody: '',
-    paymentErrorTitle: '',
-    paymentErrorBody: '',
-  });
+  const applyState = useCallback((state: EditorState) => {
+    setDraft(state.draft);
+    setSections(state.sections);
+    setCustomScript(state.customScript);
+    setTickets(state.tickets);
+    setSavedSnapshot(snapshot(state));
+    setShowTicketErrors(false);
+  }, []);
+
+  const hydrate = useCallback(
+    (data: { form: FormDetails; occupancy: Occupancy }) => {
+      setForm(data.form);
+      setOccupancy(data.occupancy);
+      applyState(stateFromForm(data.form));
+    },
+    [applyState],
+  );
+
+  const fetchForm = useCallback(
+    (formId: string) => api.get<{ form: FormDetails; occupancy: Occupancy }>(`/api/forms/${formId}`),
+    [],
+  );
 
   useEffect(() => {
-    if (!id) return;
-    api
-      .get<{ form: FormDetails; occupancy: { total: number; perTicketType: Record<string, number> } }>(
-        `/api/forms/${id}`,
-      )
-      .then((data) => {
-        setForm(data.form);
-        setOccupancy(data.occupancy);
-        setSections(data.form.schemaJson.sections ?? []);
-        setCustomScript(data.form.schemaJson.customScript ?? '');
-        setDraft({
-          slug: data.form.slug,
-          title: data.form.title,
-          description: data.form.description ?? '',
-          closesAt: toLocalInput(data.form.closesAt),
-          capacityTotal: data.form.capacityTotal?.toString() ?? '',
-          requirePhone: data.form.requirePhone,
-          termsVersion: data.form.termsVersion,
-          privacyPolicyVersion: data.form.privacyPolicyVersion,
-          paymentSuccessTitle: data.form.paymentSuccessTitle ?? '',
-          paymentSuccessBody: data.form.paymentSuccessBody ?? '',
-          paymentErrorTitle: data.form.paymentErrorTitle ?? '',
-          paymentErrorBody: data.form.paymentErrorBody ?? '',
-        });
-      })
-      .catch((error: ApiError) => setMessage({ kind: 'error', text: error.message }));
-  }, [id]);
+    allowNavigationRef.current = false;
+    if (!id) {
+      // Ten sam komponent obsługuje "nowe" i "edycję" — przy przejściu z edycji czyścimy stan.
+      setForm(null);
+      setSlugTouched(false);
+      applyState(emptyState());
+      return;
+    }
+    setLoadError(null);
+    fetchForm(id)
+      .then(hydrate)
+      .catch((error: ApiError) => setLoadError(error.message));
+  }, [id, fetchForm, hydrate, applyState]);
 
-  async function save(event: FormEvent) {
-    event.preventDefault();
+  const current: EditorState = { draft, sections, customScript, tickets };
+  const currentSnapshot = snapshot(current);
+  const dirty = currentSnapshot !== savedSnapshot;
+
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      !allowNavigationRef.current && dirty && currentLocation.pathname !== nextLocation.pathname,
+  );
+
+  useEffect(() => {
+    if (blocker.state !== 'blocked') return;
+    void confirm({
+      title: 'Opuścić edycję bez zapisywania?',
+      description: 'Masz niezapisane zmiany w tym wydarzeniu. Jeśli wyjdziesz, zostaną utracone.',
+      confirmLabel: 'Wyjdź bez zapisywania',
+      cancelLabel: 'Zostań',
+      tone: 'danger',
+    }).then((ok) => (ok ? blocker.proceed() : blocker.reset()));
+    // Tylko przy wejściu w stan "blocked" — kolejne rendery w tym stanie nie mogą otwierać okna ponownie.
+  }, [blocker.state]);
+
+  useEffect(() => {
+    if (!dirty) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [dirty]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        formRef.current?.requestSubmit();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  function scrollToSection(sectionId: string) {
+    document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  /** Zapisuje wydarzenie i bilety jednym ruchem. Zwraca true, gdy wszystko się udało. */
+  async function persist(): Promise<boolean> {
+    if (tickets.some((t) => Object.keys(ticketError(t)).length > 0)) {
+      setShowTicketErrors(true);
+      toast.error('Popraw zaznaczone pola w biletach');
+      scrollToSection('bilety');
+      return false;
+    }
+    const builderErrors = sectionBuilderErrors(sections);
+    if (builderErrors.length > 0) {
+      toast.error(builderErrors[0] as string);
+      scrollToSection('pola');
+      return false;
+    }
+
     setBusy(true);
-    setMessage(null);
     // Siatka bezpieczeństwa: opcje select mogą zawierać niedoczyszczone puste
-    // wiersze podczas edycji (czyszczenie dzieje się na onBlur w FieldBuilder).
+    // wiersze podczas edycji (czyszczenie dzieje się na onBlur w SectionBuilder).
     const cleanedSections = sections.map((section) => ({
       ...section,
+      name: section.name.trim(),
       fields: section.fields.map((field) =>
         field.type === 'select'
           ? { ...field, options: field.options.map((o) => o.trim()).filter(Boolean) }
@@ -129,66 +366,154 @@ export default function AdminFormEditor() {
       paymentSuccessBody: draft.paymentSuccessBody || null,
       paymentErrorTitle: draft.paymentErrorTitle || null,
       paymentErrorBody: draft.paymentErrorBody || null,
+      confirmationEmailTitle: draft.confirmationEmailTitle || null,
+      confirmationEmailBody: draft.confirmationEmailBody || null,
       schemaJson: { sections: cleanedSections, customScript: customScript || undefined },
     };
+
+    let formId = id ?? null;
+    // Kopia robocza — tu zapisujemy id biletów utworzonych w trakcie, żeby ponowny zapis
+    // po częściowym błędzie nie utworzył ich drugi raz.
+    const working = tickets.map((t) => ({ ...t }));
     try {
       if (isNew) {
         const created = await api.post<{ form: FormDetails }>('/api/forms', payload);
-        navigate(`/admin/formularze/${created.form.id}`);
+        formId = created.form.id;
       } else {
         await api.patch(`/api/forms/${id}`, payload);
-        setMessage({ kind: 'ok', text: 'Zapisano zmiany' });
       }
+
+      const savedById = new Map((form?.ticketTypes ?? []).map((t) => [t.id, t]));
+      for (const [index, ticket] of working.entries()) {
+        const body = {
+          name: ticket.name.trim(),
+          priceCents: parsePlnInput(ticket.priceInput) ?? 0,
+          capacity: ticket.capacityInput === '' ? null : Number(ticket.capacityInput),
+          sortOrder: index + 1,
+          isActive: ticket.isActive,
+        };
+        try {
+          if (!ticket.id) {
+            const res = await api.post<{ ticket: TicketDto }>(`/api/forms/${formId}/tickets`, body);
+            ticket.id = res.ticket.id;
+          } else {
+            const prev = savedById.get(ticket.id);
+            const changed =
+              !prev ||
+              prev.name !== body.name ||
+              prev.priceCents !== body.priceCents ||
+              prev.capacity !== body.capacity ||
+              prev.sortOrder !== body.sortOrder ||
+              prev.isActive !== body.isActive;
+            if (changed) await api.patch(`/api/forms/${formId}/tickets/${ticket.id}`, body);
+          }
+        } catch (error) {
+          const reason = error instanceof ApiError ? error.message : 'nieznany błąd';
+          throw new ApiError(0, 'TICKET', `Bilet „${body.name || 'bez nazwy'}”: ${reason}`);
+        }
+      }
+
+      if (isNew && formId) {
+        toast.success('Utworzono wydarzenie');
+        allowNavigationRef.current = true;
+        navigate(`/admin/formularze/${formId}`, { replace: true });
+        return true;
+      }
+      hydrate(await fetchForm(formId as string));
+      toast.success('Zapisano zmiany');
+      return true;
     } catch (error) {
-      setMessage({ kind: 'error', text: error instanceof ApiError ? error.message : 'Błąd zapisu' });
+      toast.error(error instanceof ApiError ? error.message : 'Błąd zapisu');
+      if (isNew && formId) {
+        // Wydarzenie powstało, ale coś poszło nie tak z biletami — przechodzimy do edycji,
+        // żeby kolejny zapis nie tworzył drugiego wydarzenia.
+        allowNavigationRef.current = true;
+        navigate(`/admin/formularze/${formId}`, { replace: true });
+      } else if (formId) {
+        // Część zmian mogła się zapisać: bierzemy stan z serwera jako "zapisany",
+        // ale zostawiamy edycje admina, żeby mógł poprawić i zapisać ponownie.
+        setTickets(working);
+        const fresh = await fetchForm(formId).catch(() => null);
+        if (fresh) {
+          setForm(fresh.form);
+          setOccupancy(fresh.occupancy);
+          setSavedSnapshot(snapshot(stateFromForm(fresh.form)));
+        }
+      }
+      return false;
     } finally {
       setBusy(false);
     }
   }
 
-  async function action(path: string) {
+  function onSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (busy) return;
+    void persist();
+  }
+
+  async function discardChanges() {
+    if (!form) return;
+    const ok = await confirm({
+      title: 'Odrzucić niezapisane zmiany?',
+      description: 'Formularz wróci do ostatnio zapisanej wersji.',
+      confirmLabel: 'Odrzuć zmiany',
+      tone: 'danger',
+    });
+    if (ok) applyState(stateFromForm(form));
+  }
+
+  async function publish() {
+    if (!form) return;
+    if (dirty && !(await persist())) return;
     try {
-      await api.post(`/api/forms/${id}/${path}`);
-      const data = await api.get<{ form: FormDetails }>(`/api/forms/${id}`);
-      setForm(data.form);
-      setMessage({ kind: 'ok', text: 'Gotowe' });
+      const data = await api.post<{ form: FormDetails }>(`/api/forms/${form.id}/publish`);
+      setForm((prev) => (prev ? { ...prev, status: data.form.status } : prev));
+      toast.success('Wydarzenie opublikowane — formularz przyjmuje zgłoszenia');
     } catch (error) {
-      setMessage({ kind: 'error', text: error instanceof ApiError ? error.message : 'Błąd operacji' });
+      toast.error(error instanceof ApiError ? error.message : 'Nie udało się opublikować');
     }
   }
 
-  async function addTicket() {
+  async function archive() {
+    if (!form) return;
+    const ok = await confirm({
+      title: 'Zarchiwizować wydarzenie?',
+      description: 'Formularz przestanie przyjmować zgłoszenia. Istniejące zgłoszenia i płatności zostaną zachowane.',
+      confirmLabel: 'Archiwizuj',
+      tone: 'danger',
+    });
+    if (!ok) return;
     try {
-      await api.post(`/api/forms/${id}/tickets`, {
-        name: 'Nowy bilet',
-        priceCents: 0,
-        sortOrder: (form?.ticketTypes.length ?? 0) + 1,
-      });
-      const data = await api.get<{ form: FormDetails }>(`/api/forms/${id}`);
-      setForm(data.form);
+      const data = await api.post<{ form: FormDetails }>(`/api/forms/${form.id}/archive`);
+      setForm((prev) => (prev ? { ...prev, status: data.form.status } : prev));
+      toast.success('Wydarzenie zarchiwizowane');
     } catch (error) {
-      setMessage({ kind: 'error', text: error instanceof ApiError ? error.message : 'Błąd' });
+      toast.error(error instanceof ApiError ? error.message : 'Błąd operacji');
     }
   }
 
-  async function saveTicket(ticket: Ticket) {
+  async function copyPublicLink() {
+    if (!form) return;
     try {
-      await api.patch(`/api/forms/${id}/tickets/${ticket.id}`, {
-        name: ticket.name,
-        priceCents: ticket.priceCents,
-        capacity: ticket.capacity,
-        isActive: ticket.isActive,
-      });
-      setMessage({ kind: 'ok', text: `Zapisano bilet: ${ticket.name}` });
-    } catch (error) {
-      setMessage({ kind: 'error', text: error instanceof ApiError ? error.message : 'Błąd zapisu biletu' });
+      await navigator.clipboard.writeText(`${window.location.origin}/f/${form.slug}`);
+      toast.success('Skopiowano link do formularza');
+    } catch {
+      toast.error('Nie udało się skopiować linku');
     }
   }
 
-  // Odpowiedź uploadu/usunięcia to surowy rekord Form bez ticketTypes — scalamy tylko
-  // pola tła w istniejący stan, żeby nie zgubić listy biletów renderowanej niżej.
+  // Odpowiedź uploadu/usunięcia to surowy rekord Form bez ticketTypes — scalamy tylko pola tła.
   function mergeBackgroundFields(patch: Pick<FormDetails, 'backgroundImageDesktopUrl' | 'backgroundImageMobileUrl'>) {
-    setForm((prev) => (prev ? { ...prev, ...patch } : prev));
+    setForm((prev) =>
+      prev
+        ? {
+            ...prev,
+            backgroundImageDesktopUrl: patch.backgroundImageDesktopUrl,
+            backgroundImageMobileUrl: patch.backgroundImageMobileUrl,
+          }
+        : prev,
+    );
   }
 
   async function uploadBackground(variant: 'desktop' | 'mobile', file: File) {
@@ -198,346 +523,458 @@ export default function AdminFormEditor() {
       body.append('image', file);
       const data = await api.post<{ form: FormDetails }>(`/api/forms/${id}/background/${variant}`, body);
       mergeBackgroundFields(data.form);
-      setMessage({ kind: 'ok', text: 'Wgrano grafikę tła' });
+      toast.success('Wgrano grafikę tła');
     } catch (error) {
-      setMessage({ kind: 'error', text: error instanceof ApiError ? error.message : 'Nie udało się wgrać pliku' });
+      toast.error(error instanceof ApiError ? error.message : 'Nie udało się wgrać pliku');
     } finally {
       setBackgroundBusy(null);
     }
   }
 
   async function removeBackground(variant: 'desktop' | 'mobile') {
+    const confirmed = await confirm({
+      title: 'Usunąć grafikę tła?',
+      description: 'Plik zostanie usunięty z wydarzenia. Możesz później wgrać nowy.',
+      confirmLabel: 'Usuń grafikę',
+      tone: 'danger',
+    });
+    if (!confirmed) return;
     setBackgroundBusy(variant);
     try {
       const data = await api.delete<{ form: FormDetails }>(`/api/forms/${id}/background/${variant}`);
       mergeBackgroundFields(data.form);
     } catch (error) {
-      setMessage({ kind: 'error', text: error instanceof ApiError ? error.message : 'Nie udało się usunąć grafiki' });
+      toast.error(error instanceof ApiError ? error.message : 'Nie udało się usunąć grafiki');
     } finally {
       setBackgroundBusy(null);
     }
   }
 
-  return (
-    <section className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">{isNew ? 'Nowe wydarzenie' : form?.title ?? 'Wydarzenie'}</h1>
-        <Link to="/admin" className="btn-secondary">
-          Wróć
+  const setField = <K extends keyof Draft>(key: K, value: Draft[K]) => setDraft((d) => ({ ...d, [key]: value }));
+
+  const moreActions: MenuItem[] = form
+    ? [
+        { label: 'Kopiuj link publiczny', icon: Copy, onSelect: () => void copyPublicLink() },
+        ...(form.status !== 'ARCHIVED'
+          ? [{ label: 'Archiwizuj', icon: Archive, tone: 'danger' as const, onSelect: () => void archive() }]
+          : []),
+      ]
+    : [];
+
+  if (!isNew && loadError) {
+    return (
+      <div className="card mx-auto max-w-md text-center">
+        <p className="font-medium text-slate-900">Nie udało się wczytać wydarzenia</p>
+        <p className="mt-1 text-sm text-slate-500">{loadError}</p>
+        <Link to="/admin" className="btn-secondary mt-4">
+          Wróć do listy
         </Link>
       </div>
+    );
+  }
 
-      {message && (
-        <p
-          className={`rounded-lg px-3 py-2 text-sm ${
-            message.kind === 'ok' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
-          }`}
-        >
-          {message.text}
+  if (!isNew && !form) {
+    return (
+      <div className="flex items-center justify-center gap-2 py-24 text-sm text-slate-500">
+        <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden />
+        Ładowanie wydarzenia…
+      </div>
+    );
+  }
+
+  const slugChangedOnPublished = form?.status === 'PUBLISHED' && draft.slug !== form.slug;
+
+  return (
+    <section className="space-y-6">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div className="min-w-0">
+          <Link
+            to="/admin"
+            className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-brand-700"
+          >
+            <ArrowLeft className="h-4 w-4" aria-hidden />
+            Wydarzenia
+          </Link>
+          <div className="mt-1 flex flex-wrap items-center gap-2.5">
+            <h1 className="truncate text-2xl font-semibold">{isNew ? 'Nowe wydarzenie' : form?.title}</h1>
+            {form && <StatusBadge meta={FORM_STATUS[form.status]} />}
+          </div>
+        </div>
+
+        {form && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Link to={`/admin/formularze/${form.id}/zgloszenia`} className="btn-secondary">
+              <Users className="h-4 w-4" aria-hidden />
+              Zgłoszenia
+            </Link>
+            {/* Publiczny formularz działa tylko dla opublikowanych wydarzeń — szkic dałby stronę "niedostępny". */}
+            {form.status === 'PUBLISHED' && (
+              <a className="btn-secondary" href={`/f/${form.slug}`} target="_blank" rel="noreferrer">
+                <ExternalLink className="h-4 w-4" aria-hidden />
+                Otwórz formularz
+              </a>
+            )}
+            {form.status === 'DRAFT' && (
+              <button type="button" className="btn-primary" onClick={() => void publish()} disabled={busy}>
+                <Globe className="h-4 w-4" aria-hidden />
+                Opublikuj
+              </button>
+            )}
+            <Menu
+              trigger={<Ellipsis className="h-4 w-4" aria-hidden />}
+              triggerLabel="Więcej akcji"
+              triggerClassName="btn-secondary px-3"
+              align="right"
+              items={moreActions}
+            />
+          </div>
+        )}
+      </div>
+
+      {form?.status === 'ARCHIVED' && (
+        <p className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <Archive className="h-4 w-4 shrink-0" aria-hidden />
+          Wydarzenie jest zarchiwizowane — formularz nie przyjmuje zgłoszeń. Dane i zgłoszenia pozostają dostępne.
         </p>
       )}
 
-      <form onSubmit={save} className="card space-y-4">
-        <div className="grid gap-4 md:grid-cols-2">
-          <div>
-            <label className="label">Tytuł wydarzenia</label>
-            <input
-              className="input"
-              value={draft.title}
-              onChange={(e) => setDraft({ ...draft, title: e.target.value })}
-              required
-            />
-          </div>
-          <div>
-            <label className="label">Slug (adres publiczny /f/…)</label>
-            <input
-              className="input font-mono"
-              value={draft.slug}
-              onChange={(e) => setDraft({ ...draft, slug: e.target.value })}
-              required
-            />
-          </div>
-        </div>
+      <div className="grid gap-6 lg:grid-cols-[12.5rem_minmax(0,1fr)] lg:gap-8">
+        <EditorNav sections={NAV_SECTIONS} />
 
-        <div>
-          <label className="label">Opis</label>
-          <RichTextEditor
-            value={draft.description}
-            onChange={(html) => setDraft({ ...draft, description: html })}
-          />
-        </div>
+        <form ref={formRef} onSubmit={onSubmit} className="min-w-0 space-y-6">
+          <EditorCard id="podstawowe" icon={Info} title="Podstawowe informacje">
+            <div>
+              <label className="label" htmlFor="form-title">
+                Tytuł wydarzenia
+              </label>
+              <input
+                id="form-title"
+                className="input"
+                value={draft.title}
+                placeholder="np. Konferencja Syjon 2026"
+                required
+                onChange={(e) => {
+                  const title = e.target.value;
+                  setDraft((d) => ({ ...d, title, slug: isNew && !slugTouched ? slugify(title) : d.slug }));
+                }}
+              />
+            </div>
 
-        <div className="grid gap-4 md:grid-cols-4">
-          <div>
-            <label className="label">Zamknięcie rejestracji</label>
-            <input
-              type="datetime-local"
-              className="input"
-              value={draft.closesAt}
-              onChange={(e) => setDraft({ ...draft, closesAt: e.target.value })}
-              required
-            />
-          </div>
-          <div>
-            <label className="label">Limit globalny (puste = brak)</label>
-            <input
-              type="number"
-              min={1}
-              className="input"
-              value={draft.capacityTotal}
-              onChange={(e) => setDraft({ ...draft, capacityTotal: e.target.value })}
-            />
-          </div>
-          <div>
-            <label className="label">Wersja regulaminu</label>
-            <input
-              className="input"
-              value={draft.termsVersion}
-              onChange={(e) => setDraft({ ...draft, termsVersion: e.target.value })}
-            />
-          </div>
-          <div>
-            <label className="label">Wersja polityki prywatności</label>
-            <input
-              className="input"
-              value={draft.privacyPolicyVersion}
-              onChange={(e) => setDraft({ ...draft, privacyPolicyVersion: e.target.value })}
-            />
-          </div>
-        </div>
-
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={draft.requirePhone}
-            onChange={(e) => setDraft({ ...draft, requirePhone: e.target.checked })}
-          />
-          Telefon wymagany w tym wydarzeniu
-        </label>
-
-        <div>
-          <h2 className="mb-2 text-lg font-medium">Tło wydarzenia</h2>
-          {isNew ? (
-            <p className="text-sm text-slate-500">Zapisz wydarzenie, aby dodać grafikę tła.</p>
-          ) : (
-            <div className="grid gap-4 md:grid-cols-2">
-              {(
-                [
-                  { variant: 'desktop' as const, label: 'Duże (ekrany od 800px)', url: form?.backgroundImageDesktopUrl ?? null },
-                  { variant: 'mobile' as const, label: 'Małe (telefony)', url: form?.backgroundImageMobileUrl ?? null },
-                ]
-              ).map(({ variant, label, url }) => (
-                <div key={variant} className="rounded-lg border border-slate-200 p-3">
-                  <p className="label">{label}</p>
-                  {url && (
-                    <img src={url} alt="" className="mb-2 h-32 w-full rounded-md object-cover" />
-                  )}
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="file"
-                      accept="image/png,image/jpeg,image/webp,image/gif"
-                      className="text-xs"
-                      disabled={backgroundBusy === variant}
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        e.target.value = '';
-                        if (file) void uploadBackground(variant, file);
-                      }}
-                    />
-                    {url && (
-                      <button
-                        type="button"
-                        className="btn-secondary px-2 py-1 text-xs text-red-600"
-                        disabled={backgroundBusy === variant}
-                        onClick={() => removeBackground(variant)}
-                      >
-                        Usuń
-                      </button>
-                    )}
-                  </div>
-                  {backgroundBusy === variant && <p className="mt-1 text-xs text-slate-500">Wgrywanie…</p>}
+            <div>
+              <label className="label" htmlFor="form-slug">
+                Adres formularza
+              </label>
+              <div className="flex gap-2">
+                <div className="flex min-w-0 flex-1">
+                  <span className="inline-flex items-center rounded-l-xl border border-r-0 border-slate-200 bg-slate-50 px-3 font-mono text-sm text-slate-500">
+                    /f/
+                  </span>
+                  <input
+                    id="form-slug"
+                    className="input !rounded-l-none font-mono"
+                    value={draft.slug}
+                    required
+                    pattern="[a-z0-9]+(-[a-z0-9]+)*"
+                    title="Małe litery, cyfry i pojedyncze myślniki"
+                    onChange={(e) => {
+                      setSlugTouched(true);
+                      setField('slug', e.target.value);
+                    }}
+                  />
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div>
-          <h2 className="mb-2 text-lg font-medium">Pola dodatkowe</h2>
-          <SectionBuilder sections={sections} onChange={setSections} />
-        </div>
-
-        <div>
-          <h2 className="mb-2 text-lg font-medium">Strona po płatności</h2>
-          <p className="mb-3 text-sm text-slate-500">
-            Uczestnik wraca z Paynow na stronę potwierdzenia, która sama rozpoznaje wynik płatności
-            (Paynow przyjmuje tylko jeden adres powrotu). Poniżej ustawisz, co ma tam zobaczyć.
-            Puste pole = tekst domyślny.
-          </p>
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2 rounded-lg border border-emerald-200 bg-emerald-50/40 p-3">
-              <p className="text-sm font-medium text-emerald-800">Płatność się powiodła</p>
-              <div>
-                <label className="label">Tytuł</label>
-                <input
-                  className="input"
-                  placeholder="Rejestracja potwierdzona"
-                  value={draft.paymentSuccessTitle}
-                  onChange={(e) => setDraft({ ...draft, paymentSuccessTitle: e.target.value })}
-                />
+                {form && (
+                  <IconButton
+                    icon={Copy}
+                    label="Kopiuj link publiczny"
+                    className="h-[42px] w-[42px] rounded-xl"
+                    onClick={() => void copyPublicLink()}
+                  />
+                )}
               </div>
-              <div>
-                <label className="label">Treść</label>
-                <textarea
-                  className="input h-24"
-                  placeholder="Np. Bilet wyślemy mailem. Do zobaczenia!"
-                  value={draft.paymentSuccessBody}
-                  onChange={(e) => setDraft({ ...draft, paymentSuccessBody: e.target.value })}
-                />
-              </div>
+              {slugChangedOnPublished ? (
+                <p className="mt-1.5 flex items-center gap-1.5 text-xs text-amber-700">
+                  <TriangleAlert className="h-3.5 w-3.5" aria-hidden />
+                  Wydarzenie jest opublikowane — zmiana adresu unieważni udostępnione linki.
+                </p>
+              ) : (
+                <p className="mt-1.5 text-xs text-slate-500">
+                  Małe litery, cyfry i myślniki.{isNew && !slugTouched ? ' Tworzy się automatycznie z tytułu.' : ''}
+                </p>
+              )}
             </div>
 
-            <div className="space-y-2 rounded-lg border border-red-200 bg-red-50/40 p-3">
-              <p className="text-sm font-medium text-red-800">Płatność nieudana lub przerwana</p>
-              <div>
-                <label className="label">Tytuł</label>
-                <input
-                  className="input"
-                  placeholder="Płatność nie została zakończona"
-                  value={draft.paymentErrorTitle}
-                  onChange={(e) => setDraft({ ...draft, paymentErrorTitle: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="label">Treść</label>
-                <textarea
-                  className="input h-24"
-                  placeholder="Np. Spróbuj ponownie albo napisz do nas na kontakt@…"
-                  value={draft.paymentErrorBody}
-                  onChange={(e) => setDraft({ ...draft, paymentErrorBody: e.target.value })}
-                />
-              </div>
+            <div>
+              <span className="label">Opis</span>
+              <RichTextEditor value={draft.description} onChange={(html) => setField('description', html)} />
             </div>
-          </div>
-        </div>
 
-        <div>
-          <h2 className="mb-2 text-lg font-medium">Własny kod JS</h2>
-          <p className="mb-2 text-sm text-slate-500">
-            Zaawansowane. Kod wykonuje się na stronie publicznego formularza (np. do ukrywania
-            sekcji w zależności od kontekstu) — to pole jest widoczne tylko tutaj, w panelu
-            administratora, i nigdy nie jest renderowane jako pole formularza dla uczestnika.
-          </p>
-          <textarea
-            className="input h-32 font-mono text-xs"
-            spellCheck={false}
-            placeholder={"document.querySelector('[data-field-key=\"...\"]').style.display = 'none';"}
-            value={customScript}
-            onChange={(e) => setCustomScript(e.target.value)}
-          />
-        </div>
-
-        <div className="flex flex-wrap gap-2 pt-2">
-          <button type="submit" className="btn-primary" disabled={busy}>
-            {busy ? 'Zapisywanie…' : 'Zapisz'}
-          </button>
-          {!isNew && form?.status !== 'PUBLISHED' && (
-            <button type="button" className="btn-secondary" onClick={() => action('publish')}>
-              Opublikuj
-            </button>
-          )}
-          {!isNew && form?.status !== 'ARCHIVED' && (
-            <button type="button" className="btn-secondary" onClick={() => action('archive')}>
-              Archiwizuj
-            </button>
-          )}
-          {!isNew && (
-            <a className="btn-secondary" href={`/f/${draft.slug}`} target="_blank" rel="noreferrer">
-              Podgląd publiczny
-            </a>
-          )}
-        </div>
-      </form>
-
-      {!isNew && form && (
-        <div className="card space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-medium">Typy biletów</h2>
-            <button type="button" className="btn-secondary" onClick={addTicket}>
-              Dodaj bilet
-            </button>
-          </div>
-          <p className="text-sm text-slate-500">
-            Zajęte miejsca łącznie: {occupancy.total}
-            {form.capacityTotal !== null ? ` / ${form.capacityTotal}` : ''}. Bilet płatny musi kosztować
-            minimum 1,00 zł (limit Paynow) albo być darmowy.
-          </p>
-
-          {form.ticketTypes.map((ticket, index) => (
-            <div key={ticket.id} className="grid items-end gap-3 rounded-lg border border-slate-200 p-4 md:grid-cols-5">
+            <div className="grid gap-4 sm:grid-cols-2">
               <div>
-                <label className="label">Nazwa</label>
+                <label className="label" htmlFor="form-closes">
+                  Zamknięcie zapisów
+                </label>
                 <input
+                  id="form-closes"
+                  type="datetime-local"
                   className="input"
-                  value={ticket.name}
-                  onChange={(e) => {
-                    const next = [...form.ticketTypes];
-                    next[index] = { ...ticket, name: e.target.value };
-                    setForm({ ...form, ticketTypes: next });
-                  }}
+                  value={draft.closesAt}
+                  required
+                  onChange={(e) => setField('closesAt', e.target.value)}
                 />
               </div>
               <div>
-                <label className="label">Cena (grosze)</label>
+                <label className="label" htmlFor="form-capacity">
+                  Limit miejsc
+                </label>
                 <input
-                  type="number"
-                  min={0}
-                  className="input"
-                  value={ticket.priceCents}
-                  onChange={(e) => {
-                    const next = [...form.ticketTypes];
-                    next[index] = { ...ticket, priceCents: Number(e.target.value) };
-                    setForm({ ...form, ticketTypes: next });
-                  }}
-                />
-                <p className="mt-1 text-xs text-slate-500">{formatPln(ticket.priceCents)}</p>
-              </div>
-              <div>
-                <label className="label">Limit (puste = brak)</label>
-                <input
+                  id="form-capacity"
                   type="number"
                   min={1}
                   className="input"
-                  value={ticket.capacity ?? ''}
-                  onChange={(e) => {
-                    const next = [...form.ticketTypes];
-                    next[index] = { ...ticket, capacity: e.target.value === '' ? null : Number(e.target.value) };
-                    setForm({ ...form, ticketTypes: next });
-                  }}
+                  placeholder="Bez limitu"
+                  value={draft.capacityTotal}
+                  onChange={(e) => setField('capacityTotal', e.target.value)}
                 />
-                <p className="mt-1 text-xs text-slate-500">
-                  zajęte: {occupancy.perTicketType[ticket.id] ?? 0}
-                </p>
+                <p className="mt-1.5 text-xs text-slate-500">Łącznie dla wszystkich biletów.</p>
               </div>
-              <label className="flex items-center gap-2 text-sm">
+            </div>
+
+            <Switch
+              checked={draft.requirePhone}
+              onChange={(value) => setField('requirePhone', value)}
+              label="Wymagaj numeru telefonu"
+              description="Bez telefonu uczestnik nie wyśle formularza."
+            />
+          </EditorCard>
+
+          <EditorCard
+            id="bilety"
+            icon={Ticket}
+            title="Bilety"
+            description="Bilet płatny kosztuje minimum 1,00 zł (limit Paynow) albo jest bezpłatny."
+          >
+            <TicketsEditor
+              tickets={tickets}
+              onChange={setTickets}
+              occupancy={occupancy}
+              capacityTotal={form?.capacityTotal ?? null}
+              showErrors={showTicketErrors}
+            />
+          </EditorCard>
+
+          <EditorCard
+            id="pola"
+            icon={ListChecks}
+            title="Pola formularza"
+            description="Dodatkowe pytania do uczestników, pogrupowane w sekcje."
+          >
+            <SectionBuilder sections={sections} onChange={setSections} />
+          </EditorCard>
+
+          <EditorCard
+            id="wyglad"
+            icon={Image}
+            title="Wygląd"
+            description="Grafika w nagłówku strony rejestracji. Bez grafiki wyświetla się gradient marki."
+          >
+            <BackgroundUploader
+              disabled={isNew}
+              desktopUrl={form?.backgroundImageDesktopUrl ?? null}
+              mobileUrl={form?.backgroundImageMobileUrl ?? null}
+              busyVariant={backgroundBusy}
+              onUpload={(variant, file) => void uploadBackground(variant, file)}
+              onRemove={(variant) => void removeBackground(variant)}
+            />
+          </EditorCard>
+
+          <EditorCard
+            id="po-platnosci"
+            icon={CreditCard}
+            title="Strona po płatności"
+            description="Co zobaczy uczestnik po powrocie z Paynow. Puste pole = tekst domyślny."
+          >
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50/40 p-4">
+                <p className="flex items-center gap-2 text-sm font-medium text-emerald-800">
+                  <CircleCheck className="h-4 w-4" aria-hidden />
+                  Płatność się powiodła
+                </p>
+                <div>
+                  <label className="label" htmlFor="success-title">
+                    Tytuł
+                  </label>
+                  <input
+                    id="success-title"
+                    className="input"
+                    placeholder="Rejestracja potwierdzona"
+                    value={draft.paymentSuccessTitle}
+                    onChange={(e) => setField('paymentSuccessTitle', e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="label" htmlFor="success-body">
+                    Treść
+                  </label>
+                  <textarea
+                    id="success-body"
+                    className="input h-24"
+                    placeholder="Np. Bilet wyślemy mailem. Do zobaczenia!"
+                    value={draft.paymentSuccessBody}
+                    onChange={(e) => setField('paymentSuccessBody', e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-3 rounded-xl border border-red-200 bg-red-50/40 p-4">
+                <p className="flex items-center gap-2 text-sm font-medium text-red-800">
+                  <CircleX className="h-4 w-4" aria-hidden />
+                  Płatność nieudana lub przerwana
+                </p>
+                <div>
+                  <label className="label" htmlFor="error-title">
+                    Tytuł
+                  </label>
+                  <input
+                    id="error-title"
+                    className="input"
+                    placeholder="Płatność nie została zakończona"
+                    value={draft.paymentErrorTitle}
+                    onChange={(e) => setField('paymentErrorTitle', e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="label" htmlFor="error-body">
+                    Treść
+                  </label>
+                  <textarea
+                    id="error-body"
+                    className="input h-24"
+                    placeholder="Np. Spróbuj ponownie albo napisz do nas na kontakt@…"
+                    value={draft.paymentErrorBody}
+                    onChange={(e) => setField('paymentErrorBody', e.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
+          </EditorCard>
+
+          <EditorCard
+            id="email"
+            icon={Mail}
+            title="E-mail z potwierdzeniem"
+            description="Wysyłany po rejestracji na bilet bezpłatny lub po opłaceniu biletu. Dane biletu i przycisk dodają się automatycznie. Puste pole = tekst domyślny."
+          >
+            <div className="grid gap-4 md:grid-cols-2">
+              <div>
+                <label className="label" htmlFor="email-title">
+                  Tytuł
+                </label>
                 <input
-                  type="checkbox"
-                  checked={ticket.isActive}
-                  onChange={(e) => {
-                    const next = [...form.ticketTypes];
-                    next[index] = { ...ticket, isActive: e.target.checked };
-                    setForm({ ...form, ticketTypes: next });
-                  }}
+                  id="email-title"
+                  className="input"
+                  placeholder="Rejestracja potwierdzona"
+                  value={draft.confirmationEmailTitle}
+                  onChange={(e) => setField('confirmationEmailTitle', e.target.value)}
                 />
-                Aktywny
+              </div>
+              <div className="md:row-span-2">
+                <label className="label" htmlFor="email-body">
+                  Treść
+                </label>
+                <textarea
+                  id="email-body"
+                  className="input h-32"
+                  placeholder="Np. Dziękujemy za rejestrację! Do zobaczenia na wydarzeniu."
+                  value={draft.confirmationEmailBody}
+                  onChange={(e) => setField('confirmationEmailBody', e.target.value)}
+                />
+              </div>
+            </div>
+          </EditorCard>
+
+          <EditorCard
+            id="zaawansowane"
+            icon={Code}
+            title="Zaawansowane"
+            description="Wersje dokumentów prawnych i własny kod JS formularza."
+          >
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label className="label" htmlFor="terms-version">
+                  Wersja regulaminu
+                </label>
+                <input
+                  id="terms-version"
+                  className="input"
+                  value={draft.termsVersion}
+                  onChange={(e) => setField('termsVersion', e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="label" htmlFor="privacy-version">
+                  Wersja polityki prywatności
+                </label>
+                <input
+                  id="privacy-version"
+                  className="input"
+                  value={draft.privacyPolicyVersion}
+                  onChange={(e) => setField('privacyPolicyVersion', e.target.value)}
+                />
+              </div>
+            </div>
+            <div>
+              <label className="label" htmlFor="custom-script">
+                Własny kod JS
               </label>
-              <button type="button" className="btn-secondary" onClick={() => saveTicket(ticket)}>
-                Zapisz bilet
+              <textarea
+                id="custom-script"
+                className="input h-32 font-mono text-xs"
+                spellCheck={false}
+                placeholder={"document.querySelector('[data-field-key=\"...\"]').style.display = 'none';"}
+                value={customScript}
+                onChange={(e) => setCustomScript(e.target.value)}
+              />
+              <p className="mt-1.5 text-xs text-slate-500">
+                Wykonuje się na stronie publicznego formularza (np. ukrywanie sekcji). Uczestnik nie widzi tego pola.
+              </p>
+            </div>
+          </EditorCard>
+
+          <div className="sticky bottom-4 z-10 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200/80 bg-white/95 py-3 pl-4 pr-3 shadow-card backdrop-blur">
+            <span
+              aria-live="polite"
+              className={`inline-flex items-center gap-2 text-sm ${dirty ? 'text-amber-700' : 'text-slate-500'}`}
+            >
+              {busy ? (
+                <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden />
+              ) : (
+                <span className={`h-2 w-2 rounded-full ${dirty ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+              )}
+              {busy
+                ? 'Zapisywanie…'
+                : dirty
+                  ? 'Niezapisane zmiany'
+                  : isNew
+                    ? 'Uzupełnij dane wydarzenia'
+                    : 'Wszystkie zmiany zapisane'}
+            </span>
+            <div className="flex items-center gap-2">
+              <kbd className="hidden rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-sans text-xs text-slate-400 sm:inline">
+                {IS_MAC ? '⌘S' : 'Ctrl+S'}
+              </kbd>
+              {dirty && form && (
+                <button type="button" className="btn-ghost" onClick={() => void discardChanges()} disabled={busy}>
+                  Odrzuć zmiany
+                </button>
+              )}
+              <button type="submit" className="btn-primary" disabled={busy || (!dirty && !isNew)}>
+                <Save className="h-4 w-4" aria-hidden />
+                {isNew ? 'Utwórz wydarzenie' : 'Zapisz'}
               </button>
             </div>
-          ))}
-        </div>
-      )}
+          </div>
+        </form>
+      </div>
     </section>
   );
 }

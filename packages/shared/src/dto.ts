@@ -39,6 +39,8 @@ export const createFormRequest = z.object({
   paymentSuccessBody: z.string().trim().max(2000).nullish(),
   paymentErrorTitle: z.string().trim().max(200).nullish(),
   paymentErrorBody: z.string().trim().max(2000).nullish(),
+  confirmationEmailTitle: z.string().trim().max(200).nullish(),
+  confirmationEmailBody: z.string().trim().max(2000).nullish(),
   schemaJson: formSchemaJson.optional(),
 });
 export type CreateFormRequest = z.infer<typeof createFormRequest>;
@@ -178,4 +180,7 @@ export interface SubmissionStatusDto {
   } | null;
   canRetry: boolean;
   paymentResultContent: PaymentResultContentDto;
+  formTitle: string;
+  formSlug: string;
+  confirmationEmailSent: boolean;
 }
