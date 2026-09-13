@@ -607,10 +607,13 @@ export default function AdminFormEditor() {
               <Users className="h-4 w-4" aria-hidden />
               Zgłoszenia
             </Link>
-            <a className="btn-secondary" href={`/f/${form.slug}`} target="_blank" rel="noreferrer">
-              <ExternalLink className="h-4 w-4" aria-hidden />
-              Podgląd
-            </a>
+            {/* Publiczny formularz działa tylko dla opublikowanych wydarzeń — szkic dałby stronę "niedostępny". */}
+            {form.status === 'PUBLISHED' && (
+              <a className="btn-secondary" href={`/f/${form.slug}`} target="_blank" rel="noreferrer">
+                <ExternalLink className="h-4 w-4" aria-hidden />
+                Otwórz formularz
+              </a>
+            )}
             {form.status === 'DRAFT' && (
               <button type="button" className="btn-primary" onClick={() => void publish()} disabled={busy}>
                 <Globe className="h-4 w-4" aria-hidden />

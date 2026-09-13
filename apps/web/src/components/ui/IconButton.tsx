@@ -7,7 +7,7 @@ interface Props extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children'
   label: string;
   tone?: 'default' | 'danger';
   /** `sm` — mniejszy, bez ramki; do wstawiania w tekst, np. w wierszu tabeli. */
-  size?: 'md' | 'sm';
+  size?: 'sm' | 'md' | 'lg';
   /** Po której stronie pokazać podpowiedź — `bottom` przy górnej krawędzi ekranu. */
   tooltip?: 'top' | 'bottom';
 }
@@ -34,7 +34,11 @@ export default function IconButton({
         type="button"
         aria-label={label}
         className={`inline-flex items-center justify-center rounded-lg border transition ${
-          size === 'sm' ? 'h-6 w-6 border-transparent bg-transparent' : 'h-8 w-8 border-slate-200 bg-white'
+          size === 'sm'
+            ? 'h-6 w-6 border-transparent bg-transparent'
+            : size === 'lg'
+              ? 'h-10 w-10 rounded-xl border-slate-200 bg-white'
+              : 'h-8 w-8 border-slate-200 bg-white'
         } focus:outline-none focus-visible:ring-4 focus-visible:ring-brand-100 disabled:pointer-events-none disabled:opacity-40 ${toneClass} ${className}`}
         {...rest}
       >

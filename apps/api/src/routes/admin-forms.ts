@@ -65,6 +65,9 @@ adminFormsRouter.get(
           capacityTotal: form.capacityTotal,
           paidCount: byStatus.PAID ?? 0,
           reservedCount: byStatus.RESERVED ?? 0,
+          // Wszystkie zgłoszenia (także wygasłe/anulowane) — decyduje, czy wydarzenie można usunąć.
+          submissionCount: rows.reduce((sum, r) => sum + r._count._all, 0),
+          thumbnailUrl: form.backgroundImageDesktopUrl ?? form.backgroundImageMobileUrl,
         };
       }),
     });
