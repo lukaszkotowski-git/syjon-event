@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 import {
+  applyDiscount,
   buildAnswersSchema,
+  discountCodeInput,
   formSchemaJson,
   normalizePlPhone,
   ticketTypeInput,
@@ -114,6 +116,43 @@ describe('cena biletu', () => {
 
   test('bilet za 1,00 PLN przechodzi', () => {
     assert.equal(ticketTypeInput.safeParse({ name: 'Normalny', priceCents: 100 }).success, true);
+  });
+});
+
+describe('kody rabatowe', () => {
+  test('rabat procentowy liczy się od ceny biletu', () => {
+    assert.equal(applyDiscount(10_000, 'PERCENT', 25), 7_500);
+  });
+
+  test('rabat kwotowy odejmuje grosze', () => {
+    assert.equal(applyDiscount(10_000, 'AMOUNT', 3_000), 7_000);
+  });
+
+  test('rabat nie schodzi poniżej zera', () => {
+    assert.equal(applyDiscount(1_000, 'AMOUNT', 5_000), 0);
+  });
+
+  test('cena poniżej minimum Paynow, ale wciąż dodatnia, staje się darmowa', () => {
+    assert.equal(applyDiscount(500, 'AMOUNT', 450), 0); // 50 gr < MIN_PAID_AMOUNT_CENTS
+  });
+
+  test('rabat 100% daje darmowy bilet', () => {
+    assert.equal(applyDiscount(10_000, 'PERCENT', 100), 0);
+  });
+
+  test('walidacja: procent poza zakresem 1–100 jest odrzucany', () => {
+    assert.equal(discountCodeInput.safeParse({ code: 'ABC10', type: 'PERCENT', value: 150 }).success, false);
+    assert.equal(discountCodeInput.safeParse({ code: 'ABC10', type: 'PERCENT', value: 0 }).success, false);
+  });
+
+  test('walidacja: kod jest normalizowany do wielkich liter', () => {
+    const result = discountCodeInput.safeParse({ code: 'wolontariusz', type: 'AMOUNT', value: 500 });
+    assert.equal(result.success, true);
+    assert.equal(result.success && result.data.code, 'WOLONTARIUSZ');
+  });
+
+  test('walidacja: zbyt krótki kod jest odrzucany', () => {
+    assert.equal(discountCodeInput.safeParse({ code: 'A', type: 'AMOUNT', value: 500 }).success, false);
   });
 });
 

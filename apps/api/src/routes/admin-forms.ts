@@ -5,11 +5,14 @@ import { z } from 'zod';
 import {
   buildAnswersSchema,
   createFormRequest,
+  discountCodeInput,
   EMPTY_FORM_SCHEMA,
   flattenSections,
   formSchemaJson,
+  MAX_DISCOUNT_CODES_PER_FORM,
   MAX_TICKET_TYPES_PER_FORM,
   ticketTypeInput,
+  updateDiscountCodeRequest,
   updateFormRequest,
   updateSubmissionRequest,
   updateTicketTypeRequest,
@@ -33,7 +36,10 @@ async function getFormOr404(id: string) {
   if (!parsed.success) throw notFound('Nie znaleziono formularza');
   const form = await prisma.form.findUnique({
     where: { id: parsed.data },
-    include: { ticketTypes: { orderBy: { sortOrder: 'asc' } } },
+    include: {
+      ticketTypes: { orderBy: { sortOrder: 'asc' } },
+      discountCodes: { orderBy: { createdAt: 'asc' } },
+    },
   });
   if (!form) throw notFound('Nie znaleziono formularza');
   return form;
@@ -112,9 +118,25 @@ adminFormsRouter.get(
   '/:id',
   asyncHandler(async (req, res) => {
     const form = await getFormOr404(req.params.id as string);
-    const occupancy = await countOccupancy(prisma, form.id, new Date());
+    const [occupancy, usageCounts] = await Promise.all([
+      countOccupancy(prisma, form.id, new Date()),
+      prisma.submission.groupBy({
+        by: ['discountCodeId'],
+        where: { formId: form.id, discountCodeId: { not: null } },
+        _count: { _all: true },
+      }),
+    ]);
+    const usageByCode = new Map(usageCounts.map((row) => [row.discountCodeId as string, row._count._all]));
+
     res.json({
-      form: { ...form, schemaJson: parseFormSchema(form.schemaJson) },
+      form: {
+        ...form,
+        schemaJson: parseFormSchema(form.schemaJson),
+        discountCodes: form.discountCodes.map((code) => ({
+          ...code,
+          usageCount: usageByCode.get(code.id) ?? 0,
+        })),
+      },
       occupancy: {
         total: occupancy.total,
         perTicketType: Object.fromEntries(occupancy.perTicketType),
@@ -265,6 +287,7 @@ adminFormsRouter.delete(
     await deleteUploadedFile(form.backgroundImageMobileUrl);
 
     await prisma.$transaction([
+      prisma.discountCode.deleteMany({ where: { formId: form.id } }),
       prisma.ticketType.deleteMany({ where: { formId: form.id } }),
       prisma.form.delete({ where: { id: form.id } }),
     ]);
@@ -334,6 +357,79 @@ adminFormsRouter.post(
   }),
 );
 
+/* ------------------------------- kody rabatowe ------------------------------ */
+
+adminFormsRouter.post(
+  '/:id/discount-codes',
+  asyncHandler(async (req, res) => {
+    const form = await getFormOr404(req.params.id as string);
+    if (form.discountCodes.length >= MAX_DISCOUNT_CODES_PER_FORM) {
+      throw badRequest(`Maksymalna liczba kodów rabatowych to ${MAX_DISCOUNT_CODES_PER_FORM}`);
+    }
+    const body = discountCodeInput.parse(req.body);
+    try {
+      const discountCode = await prisma.discountCode.create({
+        data: {
+          formId: form.id,
+          code: body.code,
+          type: body.type,
+          value: body.value,
+          isActive: body.isActive,
+        },
+      });
+      res.status(201).json({ discountCode: { ...discountCode, usageCount: 0 } });
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw conflict('Taki kod już istnieje dla tego wydarzenia', 'DISCOUNT_CODE_TAKEN');
+      }
+      throw error;
+    }
+  }),
+);
+
+adminFormsRouter.patch(
+  '/:id/discount-codes/:codeId',
+  asyncHandler(async (req, res) => {
+    const form = await getFormOr404(req.params.id as string);
+    const body = updateDiscountCodeRequest.parse(req.body);
+    const discountCode = form.discountCodes.find((c) => c.id === req.params.codeId);
+    if (!discountCode) throw notFound('Nie znaleziono kodu rabatowego');
+
+    try {
+      const updated = await prisma.discountCode.update({
+        where: { id: discountCode.id },
+        data: {
+          ...(body.code !== undefined ? { code: body.code } : {}),
+          ...(body.type !== undefined ? { type: body.type } : {}),
+          ...(body.value !== undefined ? { value: body.value } : {}),
+          ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
+        },
+      });
+      // Zmiana wartości/kodu nie rusza już złożonych zgłoszeń — one mają własny snapshot.
+      res.json({ discountCode: updated });
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw conflict('Taki kod już istnieje dla tego wydarzenia', 'DISCOUNT_CODE_TAKEN');
+      }
+      throw error;
+    }
+  }),
+);
+
+adminFormsRouter.post(
+  '/:id/discount-codes/:codeId/deactivate',
+  asyncHandler(async (req, res) => {
+    const form = await getFormOr404(req.params.id as string);
+    const discountCode = form.discountCodes.find((c) => c.id === req.params.codeId);
+    if (!discountCode) throw notFound('Nie znaleziono kodu rabatowego');
+    const updated = await prisma.discountCode.update({
+      where: { id: discountCode.id },
+      data: { isActive: false },
+    });
+    res.json({ discountCode: updated });
+  }),
+);
+
 /* --------------------------------- zgłoszenia ------------------------------ */
 
 const submissionQuery = z.object({
@@ -371,6 +467,8 @@ adminFormsRouter.get(
           ticketNameSnapshot: true,
           ticketPriceCents: true,
           currency: true,
+          discountCodeSnapshot: true,
+          discountAmountCents: true,
           status: true,
           reservationExpiresAt: true,
           createdAt: true,
@@ -439,6 +537,8 @@ adminFormsRouter.get(
       'bilet',
       'cena_pln',
       'waluta',
+      'kod_rabatowy',
+      'rabat_pln',
       'regulamin_wersja',
       'polityka_wersja',
       'akceptacja_czas',
@@ -456,6 +556,8 @@ adminFormsRouter.get(
         submission.ticketNameSnapshot,
         (submission.ticketPriceCents / 100).toFixed(2).replace('.', ','),
         submission.currency,
+        submission.discountCodeSnapshot ?? '',
+        (submission.discountAmountCents / 100).toFixed(2).replace('.', ','),
         submission.termsVersionAccepted,
         submission.privacyPolicyVersionAccepted,
         submission.legalAcceptedAt.toISOString(),

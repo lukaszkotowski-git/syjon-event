@@ -201,6 +201,14 @@ export default function Confirmation() {
                   {status.amountCents === 0 ? 'Bezpłatny' : formatPln(status.amountCents)}
                 </span>
               </div>
+              {status.discountCodeSnapshot && (
+                <div className="mt-2 flex items-center justify-between border-t border-brand-100 pt-2">
+                  <span className="text-xs font-medium uppercase tracking-wide text-brand-700/80">Kod rabatowy</span>
+                  <span className="font-mono text-sm font-semibold text-emerald-700">
+                    {status.discountCodeSnapshot} (-{formatPln(status.discountAmountCents)})
+                  </span>
+                </div>
+              )}
             </div>
             {status.confirmationEmailSent && (
               <p className="flex items-center justify-center gap-2 text-sm text-emerald-700">

@@ -1,10 +1,12 @@
-import type { Form, Submission, TicketType } from '@prisma/client';
+import type { DiscountCode, Form, Submission, TicketType } from '@prisma/client';
 import {
+  applyDiscount,
   buildAnswersSchema,
   EMPTY_FORM_SCHEMA,
   flattenSections,
   formSchemaJson,
   MIN_PAID_AMOUNT_CENTS,
+  normalizeDiscountCode,
   type CreateSubmissionRequest,
 } from '@syjonevent/shared';
 import { env } from '../env.js';
@@ -78,15 +80,29 @@ export async function createRegistration(
       );
     }
 
-    const isFree = ticketType.priceCents === 0;
+    let finalPriceCents = ticketType.priceCents;
+    let discountCode: DiscountCode | null = null;
+    if (body.discountCode) {
+      discountCode = await tx.discountCode.findFirst({
+        where: { formId: form.id, code: normalizeDiscountCode(body.discountCode), isActive: true },
+      });
+      if (!discountCode) throw conflict('Nieprawidłowy kod rabatowy', 'INVALID_DISCOUNT_CODE');
+      finalPriceCents = applyDiscount(ticketType.priceCents, discountCode.type, discountCode.value);
+    }
+    const discountAmountCents = ticketType.priceCents - finalPriceCents;
+
+    const isFree = finalPriceCents === 0;
 
     const submission = await tx.submission.create({
       data: {
         formId: form.id,
         ticketTypeId: ticketType.id,
         ticketNameSnapshot: ticketType.name,
-        ticketPriceCents: ticketType.priceCents,
+        ticketPriceCents: finalPriceCents,
         currency: ticketType.currency,
+        discountCodeId: discountCode?.id ?? null,
+        discountCodeSnapshot: discountCode?.code ?? null,
+        discountAmountCents,
         buyerEmail: body.buyer.email,
         buyerPhone: body.buyer.phone ?? null,
         payloadJson: answers as object,

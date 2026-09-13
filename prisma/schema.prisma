@@ -30,6 +30,11 @@ enum PaymentStatus {
   EXPIRED
 }
 
+enum DiscountType {
+  PERCENT
+  AMOUNT
+}
+
 model Admin {
   id           String    @id @default(uuid()) @db.Uuid
   email        String    @unique
@@ -84,8 +89,9 @@ model Form {
   updatedAt            DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
   archivedAt           DateTime?  @map("archived_at") @db.Timestamptz(3)
 
-  ticketTypes TicketType[]
-  submissions Submission[]
+  ticketTypes   TicketType[]
+  submissions   Submission[]
+  discountCodes DiscountCode[]
 
   @@index([status])
   @@map("forms")
@@ -110,6 +116,24 @@ model TicketType {
   @@map("ticket_types")
 }
 
+model DiscountCode {
+  id        String       @id @default(uuid()) @db.Uuid
+  formId    String       @map("form_id") @db.Uuid
+  code      String
+  type      DiscountType
+  value     Int
+  isActive  Boolean      @default(true) @map("is_active")
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  form        Form         @relation(fields: [formId], references: [id], onDelete: Restrict)
+  submissions Submission[]
+
+  @@unique([formId, code])
+  @@index([formId])
+  @@map("discount_codes")
+}
+
 model Submission {
   id                           String           @id @default(uuid()) @db.Uuid
   formId                       String           @map("form_id") @db.Uuid
@@ -117,6 +141,9 @@ model Submission {
   ticketNameSnapshot           String           @map("ticket_name_snapshot")
   ticketPriceCents             Int              @map("ticket_price_cents")
   currency                     String           @default("PLN") @db.Char(3)
+  discountCodeId               String?          @map("discount_code_id") @db.Uuid
+  discountCodeSnapshot         String?          @map("discount_code_snapshot")
+  discountAmountCents          Int              @default(0) @map("discount_amount_cents")
   buyerEmail                   String           @map("buyer_email")
   buyerPhone                   String?          @map("buyer_phone")
   payloadJson                  Json             @map("payload_json")
@@ -131,9 +158,10 @@ model Submission {
   createdAt                    DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt                    DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  form       Form       @relation(fields: [formId], references: [id], onDelete: Restrict)
-  ticketType TicketType @relation(fields: [ticketTypeId], references: [id], onDelete: Restrict)
-  payments   Payment[]
+  form         Form          @relation(fields: [formId], references: [id], onDelete: Restrict)
+  ticketType   TicketType    @relation(fields: [ticketTypeId], references: [id], onDelete: Restrict)
+  discountCode DiscountCode? @relation(fields: [discountCodeId], references: [id], onDelete: Restrict)
+  payments     Payment[]
 
   @@index([formId, status])
   @@index([ticketTypeId, status])

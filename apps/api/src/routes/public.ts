@@ -1,8 +1,12 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import {
+  applyDiscount,
+  checkDiscountCodeRequest,
   createSubmissionRequest,
+  normalizeDiscountCode,
   type CreateSubmissionResponse,
+  type DiscountCodeCheckResponse,
   type PublicFormDto,
   type SubmissionStatusDto,
 } from '@syjonevent/shared';
@@ -47,7 +51,10 @@ publicRouter.get(
     if (!form) throw notFound('Formularz niedostępny');
     assertFormOpen(form, now);
 
-    const occupancy = await countOccupancy(prisma, form.id, now);
+    const [occupancy, activeDiscountCodes] = await Promise.all([
+      countOccupancy(prisma, form.id, now),
+      prisma.discountCode.count({ where: { formId: form.id, isActive: true } }),
+    ]);
     const formSoldOut = form.capacityTotal !== null && occupancy.total >= form.capacityTotal;
 
     const dto: PublicFormDto = {
@@ -60,6 +67,7 @@ publicRouter.get(
       termsVersion: form.termsVersion,
       privacyPolicyVersion: form.privacyPolicyVersion,
       schemaJson: parseFormSchema(form.schemaJson),
+      hasDiscountCodes: activeDiscountCodes > 0,
       soldOut: formSoldOut,
       backgroundImageDesktopUrl: form.backgroundImageDesktopUrl,
       backgroundImageMobileUrl: form.backgroundImageMobileUrl,
@@ -75,6 +83,38 @@ publicRouter.get(
       }),
     };
 
+    res.json(dto);
+  }),
+);
+
+publicRouter.post(
+  '/f/:slug/discount-codes/check',
+  writeLimiter,
+  asyncHandler(async (req, res) => {
+    const body = checkDiscountCodeRequest.parse(req.body);
+    const form = await prisma.form.findUnique({ where: { slug: req.params.slug as string } });
+    if (!form) throw notFound('Formularz niedostępny');
+    assertFormOpen(form);
+
+    const ticket = await prisma.ticketType.findFirst({
+      where: { id: body.ticketTypeId, formId: form.id, isActive: true },
+    });
+    if (!ticket) throw notFound('Wybrany typ biletu nie istnieje');
+
+    const discountCode = await prisma.discountCode.findFirst({
+      where: { formId: form.id, code: normalizeDiscountCode(body.code), isActive: true },
+    });
+    if (!discountCode) throw conflict('Nieprawidłowy kod rabatowy', 'INVALID_DISCOUNT_CODE');
+
+    const discountedPriceCents = applyDiscount(ticket.priceCents, discountCode.type, discountCode.value);
+    const dto: DiscountCodeCheckResponse = {
+      code: discountCode.code,
+      type: discountCode.type,
+      value: discountCode.value,
+      originalPriceCents: ticket.priceCents,
+      discountedPriceCents,
+      discountAmountCents: ticket.priceCents - discountedPriceCents,
+    };
     res.json(dto);
   }),
 );
@@ -194,6 +234,8 @@ publicRouter.get(
       ticketName: fresh.ticketNameSnapshot,
       amountCents: fresh.ticketPriceCents,
       currency: fresh.currency,
+      discountCodeSnapshot: fresh.discountCodeSnapshot,
+      discountAmountCents: fresh.discountAmountCents,
       reservationExpiresAt: fresh.reservationExpiresAt?.toISOString() ?? null,
       lastPayment: payment
         ? {

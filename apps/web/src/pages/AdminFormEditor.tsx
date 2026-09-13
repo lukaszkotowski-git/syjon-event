@@ -18,14 +18,16 @@ import {
   Mail,
   Save,
   Ticket,
+  TicketPercent,
   TriangleAlert,
   Users,
   type LucideIcon,
 } from 'lucide-react';
-import type { FormSection } from '@syjonevent/shared';
+import type { DiscountCodeDto, FormSection } from '@syjonevent/shared';
 import SectionBuilder, { sectionBuilderErrors } from '../components/SectionBuilder';
 import RichTextEditor from '../components/RichTextEditor';
 import BackgroundUploader from '../components/editor/BackgroundUploader';
+import DiscountCodesEditor, { discountCodeError, type DiscountCodeDraft } from '../components/editor/DiscountCodesEditor';
 import EditorNav, { type NavSection } from '../components/editor/EditorNav';
 import TicketsEditor, { ticketError, type TicketDraft } from '../components/editor/TicketsEditor';
 import { useConfirm } from '../components/ui/ConfirmDialog';
@@ -69,6 +71,7 @@ interface FormDetails {
   backgroundImageMobileUrl: string | null;
   schemaJson: { sections: FormSection[]; customScript?: string };
   ticketTypes: TicketDto[];
+  discountCodes: DiscountCodeDto[];
 }
 
 interface Occupancy {
@@ -99,11 +102,13 @@ interface EditorState {
   sections: FormSection[];
   customScript: string;
   tickets: TicketDraft[];
+  discountCodes: DiscountCodeDraft[];
 }
 
 const NAV_SECTIONS: NavSection[] = [
   { id: 'podstawowe', label: 'Podstawowe', icon: Info },
   { id: 'bilety', label: 'Bilety', icon: Ticket },
+  { id: 'rabaty', label: 'Kody rabatowe', icon: TicketPercent },
   { id: 'pola', label: 'Pola formularza', icon: ListChecks },
   { id: 'wyglad', label: 'Wygląd', icon: Image },
   { id: 'po-platnosci', label: 'Po płatności', icon: CreditCard },
@@ -141,6 +146,7 @@ function emptyState(): EditorState {
     sections: [],
     customScript: '',
     tickets: [],
+    discountCodes: [],
   };
 }
 
@@ -175,6 +181,15 @@ function stateFromForm(form: FormDetails): EditorState {
         capacityInput: t.capacity?.toString() ?? '',
         isActive: t.isActive,
       })),
+    discountCodes: form.discountCodes.map((c) => ({
+      key: c.id,
+      id: c.id,
+      code: c.code,
+      type: c.type,
+      valueInput: c.type === 'PERCENT' ? String(c.value) : centsToPlnInput(c.value),
+      isActive: c.isActive,
+      usageCount: c.usageCount,
+    })),
   };
 }
 
@@ -188,6 +203,11 @@ function snapshot(state: EditorState): string {
     tickets: state.tickets.map(({ key: _key, priceInput, ...rest }) => ({
       ...rest,
       price: parsePlnInput(priceInput) ?? priceInput,
+    })),
+    discountCodes: state.discountCodes.map(({ key: _key, usageCount: _usageCount, valueInput, type, ...rest }) => ({
+      ...rest,
+      type,
+      value: type === 'PERCENT' ? Number(valueInput) : (parsePlnInput(valueInput) ?? valueInput),
     })),
   });
 }
@@ -236,9 +256,11 @@ export default function AdminFormEditor() {
   const [sections, setSections] = useState<FormSection[]>(initial.sections);
   const [customScript, setCustomScript] = useState(initial.customScript);
   const [tickets, setTickets] = useState<TicketDraft[]>(initial.tickets);
+  const [discountCodes, setDiscountCodes] = useState<DiscountCodeDraft[]>(initial.discountCodes);
   const [savedSnapshot, setSavedSnapshot] = useState(() => snapshot(initial));
   const [slugTouched, setSlugTouched] = useState(false);
   const [showTicketErrors, setShowTicketErrors] = useState(false);
+  const [showDiscountErrors, setShowDiscountErrors] = useState(false);
   const [busy, setBusy] = useState(false);
   const [backgroundBusy, setBackgroundBusy] = useState<'desktop' | 'mobile' | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -250,8 +272,10 @@ export default function AdminFormEditor() {
     setSections(state.sections);
     setCustomScript(state.customScript);
     setTickets(state.tickets);
+    setDiscountCodes(state.discountCodes);
     setSavedSnapshot(snapshot(state));
     setShowTicketErrors(false);
+    setShowDiscountErrors(false);
   }, []);
 
   const hydrate = useCallback(
@@ -283,7 +307,7 @@ export default function AdminFormEditor() {
       .catch((error: ApiError) => setLoadError(error.message));
   }, [id, fetchForm, hydrate, applyState]);
 
-  const current: EditorState = { draft, sections, customScript, tickets };
+  const current: EditorState = { draft, sections, customScript, tickets, discountCodes };
   const currentSnapshot = snapshot(current);
   const dirty = currentSnapshot !== savedSnapshot;
 
@@ -337,6 +361,12 @@ export default function AdminFormEditor() {
       scrollToSection('bilety');
       return false;
     }
+    if (discountCodes.some((c) => Object.keys(discountCodeError(c)).length > 0)) {
+      setShowDiscountErrors(true);
+      toast.error('Popraw zaznaczone pola w kodach rabatowych');
+      scrollToSection('rabaty');
+      return false;
+    }
     const builderErrors = sectionBuilderErrors(sections);
     if (builderErrors.length > 0) {
       toast.error(builderErrors[0] as string);
@@ -377,9 +407,10 @@ export default function AdminFormEditor() {
     };
 
     let formId = id ?? null;
-    // Kopia robocza — tu zapisujemy id biletów utworzonych w trakcie, żeby ponowny zapis
+    // Kopia robocza — tu zapisujemy id biletów/kodów utworzonych w trakcie, żeby ponowny zapis
     // po częściowym błędzie nie utworzył ich drugi raz.
     const working = tickets.map((t) => ({ ...t }));
+    const workingDiscounts = discountCodes.map((c) => ({ ...c }));
     try {
       if (isNew) {
         const created = await api.post<{ form: FormDetails }>('/api/forms', payload);
@@ -418,6 +449,33 @@ export default function AdminFormEditor() {
         }
       }
 
+      const savedDiscountById = new Map((form?.discountCodes ?? []).map((c) => [c.id, c]));
+      for (const code of workingDiscounts) {
+        const body = {
+          code: code.code.trim().toUpperCase(),
+          type: code.type,
+          value: code.type === 'PERCENT' ? Number(code.valueInput) : (parsePlnInput(code.valueInput) ?? 0),
+          isActive: code.isActive,
+        };
+        try {
+          if (!code.id) {
+            const res = await api.post<{ discountCode: DiscountCodeDto }>(
+              `/api/forms/${formId}/discount-codes`,
+              body,
+            );
+            code.id = res.discountCode.id;
+          } else {
+            const prev = savedDiscountById.get(code.id);
+            const changed =
+              !prev || prev.code !== body.code || prev.type !== body.type || prev.value !== body.value || prev.isActive !== body.isActive;
+            if (changed) await api.patch(`/api/forms/${formId}/discount-codes/${code.id}`, body);
+          }
+        } catch (error) {
+          const reason = error instanceof ApiError ? error.message : 'nieznany błąd';
+          throw new ApiError(0, 'DISCOUNT_CODE', `Kod „${body.code || 'bez nazwy'}”: ${reason}`);
+        }
+      }
+
       if (isNew && formId) {
         toast.success('Utworzono wydarzenie');
         allowNavigationRef.current = true;
@@ -438,6 +496,7 @@ export default function AdminFormEditor() {
         // Część zmian mogła się zapisać: bierzemy stan z serwera jako "zapisany",
         // ale zostawiamy edycje admina, żeby mógł poprawić i zapisać ponownie.
         setTickets(working);
+        setDiscountCodes(workingDiscounts);
         const fresh = await fetchForm(formId).catch(() => null);
         if (fresh) {
           setForm(fresh.form);
@@ -778,6 +837,15 @@ export default function AdminFormEditor() {
               capacityTotal={form?.capacityTotal ?? null}
               showErrors={showTicketErrors}
             />
+          </EditorCard>
+
+          <EditorCard
+            id="rabaty"
+            icon={TicketPercent}
+            title="Kody rabatowe"
+            description="Uczestnik wpisuje kod podczas rejestracji, by dostać tańszy bilet — procentowo lub o stałą kwotę."
+          >
+            <DiscountCodesEditor codes={discountCodes} onChange={setDiscountCodes} showErrors={showDiscountErrors} />
           </EditorCard>
 
           <EditorCard

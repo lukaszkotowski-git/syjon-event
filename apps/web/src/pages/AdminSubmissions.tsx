@@ -12,6 +12,7 @@ import {
   MailX,
   Pencil,
   Search,
+  TicketPercent,
   Wallet,
   X,
 } from 'lucide-react';
@@ -42,6 +43,8 @@ interface SubmissionRow {
   ticketNameSnapshot: string;
   ticketPriceCents: number;
   currency: string;
+  discountCodeSnapshot: string | null;
+  discountAmountCents: number;
   status: SubmissionStatus;
   reservationExpiresAt: string | null;
   createdAt: string;
@@ -60,6 +63,8 @@ interface SubmissionDetail {
   buyerPhone: string | null;
   ticketNameSnapshot: string;
   ticketPriceCents: number;
+  discountCodeSnapshot: string | null;
+  discountAmountCents: number;
   status: SubmissionStatus;
   payloadJson: Answers;
   schemaSnapshotJson: { sections: FormSection[] };
@@ -383,6 +388,12 @@ export default function AdminSubmissions() {
                   <td className="px-4 py-3 text-slate-700">{row.ticketNameSnapshot}</td>
                   <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-slate-700">
                     {row.ticketPriceCents === 0 ? 'Bezpłatny' : formatPln(row.ticketPriceCents)}
+                    {row.discountCodeSnapshot && (
+                      <p className="flex items-center justify-end gap-1 text-xs font-normal text-emerald-700">
+                        <TicketPercent className="h-3 w-3" aria-hidden />
+                        {row.discountCodeSnapshot}
+                      </p>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <StatusBadge meta={SUBMISSION_STATUS[row.status]} />
@@ -506,6 +517,16 @@ function SubmissionDetailBody({
             </span>
           </dd>
         </div>
+        {detail.discountCodeSnapshot && (
+          <div>
+            <dt className="text-xs text-slate-500">Kod rabatowy</dt>
+            <dd className="mt-1 flex items-center gap-1.5 font-medium text-emerald-700">
+              <TicketPercent className="h-4 w-4" aria-hidden />
+              <span className="font-mono">{detail.discountCodeSnapshot}</span>
+              <span className="font-normal text-slate-500">(-{formatPln(detail.discountAmountCents)})</span>
+            </dd>
+          </div>
+        )}
         {detail.status === 'RESERVED' && detail.reservationExpiresAt && (
           <div>
             <dt className="text-xs text-slate-500">Rezerwacja ważna do</dt>

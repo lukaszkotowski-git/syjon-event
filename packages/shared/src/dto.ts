@@ -87,6 +87,27 @@ export const updateTicketTypeRequest = z
   });
 export type UpdateTicketTypeRequest = z.infer<typeof updateTicketTypeRequest>;
 
+/* ------------------------------ kody rabatowe ------------------------------ */
+
+export interface DiscountCodeDto {
+  id: string;
+  code: string;
+  type: 'PERCENT' | 'AMOUNT';
+  value: number;
+  isActive: boolean;
+  usageCount: number;
+  createdAt: string;
+}
+
+export interface DiscountCodeCheckResponse {
+  code: string;
+  type: 'PERCENT' | 'AMOUNT';
+  value: number;
+  originalPriceCents: number;
+  discountedPriceCents: number;
+  discountAmountCents: number;
+}
+
 /* --------------------------------- public --------------------------------- */
 
 export const buyerSchema = z.object({
@@ -110,6 +131,7 @@ export const createSubmissionRequest = z.object({
   ticketTypeId: z.string().uuid(),
   buyer: buyerSchema,
   answers: z.record(z.unknown()).default({}),
+  discountCode: z.string().trim().min(1).max(40).optional(),
   acceptTerms: z.literal(true, { errorMap: () => ({ message: 'Akceptacja regulaminu jest wymagana' }) }),
   acceptPrivacy: z.literal(true, {
     errorMap: () => ({ message: 'Akceptacja polityki prywatności jest wymagana' }),
@@ -146,6 +168,7 @@ export interface PublicFormDto {
   privacyPolicyVersion: string;
   schemaJson: z.infer<typeof formSchemaJson>;
   ticketTypes: PublicTicketTypeDto[];
+  hasDiscountCodes: boolean;
   soldOut: boolean;
   backgroundImageDesktopUrl: string | null;
   backgroundImageMobileUrl: string | null;
@@ -216,6 +239,8 @@ export interface SubmissionStatusDto {
   ticketName: string;
   amountCents: number;
   currency: string;
+  discountCodeSnapshot: string | null;
+  discountAmountCents: number;
   reservationExpiresAt: string | null;
   lastPayment: {
     status: string;

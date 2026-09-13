@@ -12,7 +12,9 @@ import {
   Phone,
   ShieldCheck,
   Ticket,
+  TicketPercent,
   TicketX,
+  X,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -20,6 +22,7 @@ import {
   buyerSchema,
   flattenSections,
   type CreateSubmissionResponse,
+  type DiscountCodeCheckResponse,
   type FieldDefinition,
   type FormSection,
   type PublicFormDto,
@@ -86,6 +89,11 @@ export default function PublicForm() {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [buyerErrors, setBuyerErrors] = useState<Record<string, string>>({});
   const [ticketError, setTicketError] = useState<string | null>(null);
+  const [discountFieldOpen, setDiscountFieldOpen] = useState(false);
+  const [discountCodeText, setDiscountCodeText] = useState('');
+  const [discountError, setDiscountError] = useState<string | null>(null);
+  const [discountBusy, setDiscountBusy] = useState(false);
+  const [appliedDiscount, setAppliedDiscount] = useState<DiscountCodeCheckResponse | null>(null);
   const [legalError, setLegalError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -140,7 +148,48 @@ export default function PublicForm() {
 
   const currentStepKey = steps[stepIndex]?.key;
   const selectedTicket = form?.ticketTypes.find((t) => t.id === ticketTypeId) ?? null;
-  const isPaid = Boolean(selectedTicket && selectedTicket.priceCents > 0);
+  const effectivePriceCents = appliedDiscount
+    ? appliedDiscount.discountedPriceCents
+    : (selectedTicket?.priceCents ?? 0);
+  const isPaid = effectivePriceCents > 0;
+
+  // Wybrany bilet się zmienił (np. wrócono do kroku 1) — kod trzeba przeliczyć na nową cenę.
+  useEffect(() => {
+    if (!appliedDiscount || !form || !ticketTypeId) return;
+    api
+      .post<DiscountCodeCheckResponse>(`/api/public/f/${form.slug}/discount-codes/check`, {
+        code: appliedDiscount.code,
+        ticketTypeId,
+      })
+      .then(setAppliedDiscount)
+      .catch(() => setAppliedDiscount(null));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticketTypeId]);
+
+  async function applyDiscountCode() {
+    if (!form || !ticketTypeId || !discountCodeText.trim()) return;
+    setDiscountBusy(true);
+    setDiscountError(null);
+    try {
+      const res = await api.post<DiscountCodeCheckResponse>(`/api/public/f/${form.slug}/discount-codes/check`, {
+        code: discountCodeText.trim(),
+        ticketTypeId,
+      });
+      setAppliedDiscount(res);
+    } catch (err) {
+      setAppliedDiscount(null);
+      setDiscountError(err instanceof ApiError ? err.message : 'Nie udało się sprawdzić kodu');
+    } finally {
+      setDiscountBusy(false);
+    }
+  }
+
+  function removeDiscountCode() {
+    setAppliedDiscount(null);
+    setDiscountCodeText('');
+    setDiscountError(null);
+    setDiscountFieldOpen(false);
+  }
 
   function validateCustomFields() {
     const parsed = buildAnswersSchema(fields).safeParse(
@@ -238,6 +287,7 @@ export default function PublicForm() {
         ticketTypeId,
         buyer: { email: buyer.email, phone: buyer.phone || null },
         answers: fieldsResult.data,
+        discountCode: appliedDiscount?.code,
         acceptTerms: legal.terms,
         acceptPrivacy: legal.privacy,
       });
@@ -519,6 +569,63 @@ export default function PublicForm() {
                   </div>
                   {ticketError && <p className="text-sm text-red-600">{ticketError}</p>}
 
+                  {form.hasDiscountCodes && selectedTicket && selectedTicket.priceCents > 0 && (
+                    <div>
+                      {appliedDiscount ? (
+                        <div className="flex items-center justify-between gap-3 rounded-xl bg-emerald-50 px-4 py-3">
+                          <p className="flex items-center gap-2 text-sm text-emerald-800">
+                            <CircleCheck className="h-4 w-4 shrink-0" aria-hidden />
+                            Kod <span className="font-mono font-semibold">{appliedDiscount.code}</span> zastosowany —
+                            rabat {formatPln(appliedDiscount.discountAmountCents)}
+                          </p>
+                          <IconButton icon={X} label="Usuń kod rabatowy" size="sm" onClick={removeDiscountCode} />
+                        </div>
+                      ) : discountFieldOpen ? (
+                        <div className="flex items-start gap-2">
+                          <div className="flex-1">
+                            <label className="label" htmlFor="discount-code">
+                              Kod rabatowy
+                            </label>
+                            <input
+                              id="discount-code"
+                              className={`input font-mono uppercase ${discountError ? 'input-error' : ''}`}
+                              placeholder="np. WOLONTARIUSZ"
+                              value={discountCodeText}
+                              onChange={(e) => {
+                                setDiscountCodeText(e.target.value.toUpperCase());
+                                setDiscountError(null);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  void applyDiscountCode();
+                                }
+                              }}
+                            />
+                            {discountError && <p className="mt-1 text-xs text-red-600">{discountError}</p>}
+                          </div>
+                          <button
+                            type="button"
+                            className="btn-secondary mt-6"
+                            onClick={() => void applyDiscountCode()}
+                            disabled={discountBusy || !discountCodeText.trim()}
+                          >
+                            {discountBusy ? 'Sprawdzam…' : 'Zastosuj'}
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1.5 text-sm font-medium text-brand-700 hover:text-brand-900"
+                          onClick={() => setDiscountFieldOpen(true)}
+                        >
+                          <TicketPercent className="h-4 w-4" aria-hidden />
+                          Mam kod rabatowy
+                        </button>
+                      )}
+                    </div>
+                  )}
+
                   <div className="space-y-3 border-t border-slate-100 pt-5">
                     <h3 className="font-semibold text-slate-900">Dane kupującego</h3>
                     <div>
@@ -593,12 +700,24 @@ export default function PublicForm() {
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <p className="text-lg font-bold text-brand-800">
-                          {selectedTicket && isPaid ? formatPln(selectedTicket.priceCents) : 'Bezpłatny'}
-                        </p>
+                        <div className="text-right">
+                          {appliedDiscount && selectedTicket && (
+                            <p className="text-xs text-slate-400 line-through">{formatPln(selectedTicket.priceCents)}</p>
+                          )}
+                          <p className="text-lg font-bold text-brand-800">
+                            {isPaid ? formatPln(effectivePriceCents) : 'Bezpłatny'}
+                          </p>
+                        </div>
                         {editButton('Zmień bilet', 'ticket')}
                       </div>
                     </div>
+                    {appliedDiscount && (
+                      <p className="mt-2 flex items-center gap-1.5 border-t border-brand-100 pt-2 text-xs text-emerald-700">
+                        <TicketPercent className="h-3.5 w-3.5" aria-hidden />
+                        Kod <span className="font-mono font-semibold">{appliedDiscount.code}</span> — rabat{' '}
+                        {formatPln(appliedDiscount.discountAmountCents)}
+                      </p>
+                    )}
                   </div>
 
                   <div className="rounded-2xl border border-slate-200 p-4">

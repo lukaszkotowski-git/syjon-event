@@ -14,6 +14,7 @@ export const MAX_DESCRIPTION_LENGTH = 20000;
 export const MAX_OPTIONS_PER_SELECT = 100;
 export const MAX_TICKET_TYPES_PER_FORM = 20;
 export const MAX_CUSTOM_SCRIPT_LENGTH = 20000;
+export const MAX_DISCOUNT_CODES_PER_FORM = 50;
 
 export const CURRENCY = 'PLN' as const;
 
