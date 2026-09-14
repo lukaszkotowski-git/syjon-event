@@ -25,6 +25,7 @@ import { countOccupancy, isUniqueViolation } from '../services/capacity.js';
 import { parseFormSchema } from '../services/registration.js';
 import { imageUpload, UPLOAD_DIR, uploadPublicUrl } from '../uploads.js';
 import { toCsv } from '../utils/csv.js';
+import { ticketReference } from '../utils/ticket-code.js';
 
 export const adminFormsRouter: Router = Router();
 adminFormsRouter.use(requireAdmin);
@@ -287,6 +288,8 @@ adminFormsRouter.delete(
     await deleteUploadedFile(form.backgroundImageMobileUrl);
 
     await prisma.$transaction([
+      prisma.checkInAttempt.deleteMany({ where: { formId: form.id } }),
+      prisma.scanStation.deleteMany({ where: { formId: form.id } }),
       prisma.discountCode.deleteMany({ where: { formId: form.id } }),
       prisma.ticketType.deleteMany({ where: { formId: form.id } }),
       prisma.form.delete({ where: { id: form.id } }),
@@ -432,6 +435,26 @@ adminFormsRouter.post(
 
 /* --------------------------------- zgłoszenia ------------------------------ */
 
+async function submissionDetail(formId: string, submissionId: string) {
+  const found = await prisma.submission.findFirst({
+    where: { id: submissionId, formId },
+    include: {
+      payments: { orderBy: { createdAt: 'desc' } },
+      checkedInStation: { select: { name: true } },
+    },
+  });
+  if (!found) throw notFound('Nie znaleziono zgłoszenia');
+  // Nonce biletu i hash tokenu nie są potrzebne w panelu — nie wysyłamy ich do przeglądarki.
+  const { ticketNonce, publicTokenHash: _publicTokenHash, checkedInStation, ...submission } = found;
+  return {
+    ...submission,
+    schemaSnapshotJson: parseFormSchema(submission.schemaSnapshotJson),
+    ticketIssued: ticketNonce !== null,
+    ticketReference: ticketReference(submission.id),
+    checkedInStationName: checkedInStation?.name ?? null,
+  };
+}
+
 const submissionQuery = z.object({
   status: z.enum(['RESERVED', 'PAID', 'EXPIRED', 'CANCELLED']).optional(),
   email: z.string().trim().min(1).max(320).optional(),
@@ -575,18 +598,7 @@ adminFormsRouter.get(
   '/:id/submissions/:submissionId',
   asyncHandler(async (req, res) => {
     const form = await getFormOr404(req.params.id as string);
-    const submission = await prisma.submission.findFirst({
-      where: { id: req.params.submissionId as string, formId: form.id },
-      include: { payments: { orderBy: { createdAt: 'desc' } } },
-    });
-    if (!submission) throw notFound('Nie znaleziono zgłoszenia');
-
-    res.json({
-      submission: {
-        ...submission,
-        schemaSnapshotJson: parseFormSchema(submission.schemaSnapshotJson),
-      },
-    });
+    res.json({ submission: await submissionDetail(form.id, req.params.submissionId as string) });
   }),
 );
 
@@ -615,6 +627,6 @@ adminFormsRouter.patch(
       },
     });
 
-    res.json({ submission: { ...updated, schemaSnapshotJson: schema } });
+    res.json({ submission: await submissionDetail(form.id, updated.id) });
   }),
 );

@@ -14,6 +14,7 @@ import { badRequest, conflict, gone, notFound } from '../http/errors.js';
 import { prisma } from '../prisma.js';
 import { generatePublicToken, hashPublicToken } from '../utils/tokens.js';
 import { checkAvailability, lockForm } from './capacity.js';
+import { newTicketFields } from './tickets.js';
 
 export function parseFormSchema(raw: unknown) {
   const parsed = formSchemaJson.safeParse(raw ?? EMPTY_FORM_SCHEMA);
@@ -114,6 +115,7 @@ export async function createRegistration(
         reservationExpiresAt: isFree
           ? null
           : new Date(now.getTime() + env().PAYNOW_VALIDITY_SECONDS * 1000),
+        ...(isFree ? newTicketFields(now) : {}),
         publicTokenHash: hashPublicToken(publicToken),
       },
     });

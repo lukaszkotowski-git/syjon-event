@@ -4,10 +4,12 @@ import express, { type Express } from 'express';
 import helmet from 'helmet';
 import { env } from './env.js';
 import { errorHandler } from './http/errors.js';
+import { adminAttendanceRouter } from './routes/admin-attendance.js';
 import { adminDashboardRouter } from './routes/admin-dashboard.js';
 import { adminFormsRouter } from './routes/admin-forms.js';
 import { authRouter } from './routes/auth.js';
 import { publicRouter } from './routes/public.js';
+import { scannerRouter } from './routes/scanner.js';
 import { webhookRouter } from './routes/webhook.js';
 import { UPLOAD_DIR } from './uploads.js';
 
@@ -37,9 +39,11 @@ export function createApp(): Express {
 
   app.use('/api/uploads', express.static(UPLOAD_DIR, { maxAge: '7d' }));
   app.use('/api/auth', authRouter);
+  app.use('/api/forms/:formId/attendance', adminAttendanceRouter);
   app.use('/api/forms', adminFormsRouter);
   app.use('/api/dashboard', adminDashboardRouter);
   app.use('/api/public', publicRouter);
+  app.use('/api/scanner', scannerRouter);
 
   app.use((_req, res) => {
     res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Nie znaleziono zasobu' } });

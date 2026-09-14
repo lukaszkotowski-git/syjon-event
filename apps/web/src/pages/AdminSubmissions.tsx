@@ -11,6 +11,11 @@ import {
   MailCheck,
   MailX,
   Pencil,
+  QrCode,
+  RefreshCw,
+  ScanLine,
+  Send,
+  UserRoundCheck,
   Search,
   TicketPercent,
   Wallet,
@@ -70,6 +75,10 @@ interface SubmissionDetail {
   schemaSnapshotJson: { sections: FormSection[] };
   reservationExpiresAt: string | null;
   confirmationEmailSentAt: string | null;
+  ticketIssued: boolean;
+  ticketReference: string;
+  checkedInAt: string | null;
+  checkedInStationName: string | null;
   createdAt: string;
   payments?: PaymentAttempt[];
 }
@@ -114,6 +123,7 @@ export default function AdminSubmissions() {
   const [editBuyer, setEditBuyer] = useState({ email: '', phone: '' });
   const [editAnswers, setEditAnswers] = useState<Answers>({});
   const [saving, setSaving] = useState(false);
+  const [ticketBusy, setTicketBusy] = useState(false);
 
   useEffect(() => {
     api
@@ -237,6 +247,42 @@ export default function AdminSubmissions() {
     }
   }
 
+  async function resendTicket() {
+    if (!detail) return;
+    setTicketBusy(true);
+    try {
+      await api.post(`/api/forms/${id}/attendance/tickets/${detail.id}/resend`);
+      toast.success(`Wysłano bilet na ${detail.buyerEmail}`);
+      setDetail({ ...detail, ticketIssued: true });
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : 'Nie udało się wysłać biletu');
+    } finally {
+      setTicketBusy(false);
+    }
+  }
+
+  async function reissueTicket() {
+    if (!detail) return;
+    const ok = await confirm({
+      title: 'Unieważnić kod QR i wystawić nowy?',
+      description:
+        'Użyj, gdy ktoś inny mógł skopiować bilet. Stary kod przestanie działać na wejściu, a uczestnik dostanie e-mail z nowym.',
+      confirmLabel: 'Wystaw nowy kod',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    setTicketBusy(true);
+    try {
+      const data = await api.post<{ emailSent: boolean }>(`/api/forms/${id}/attendance/tickets/${detail.id}/reissue`);
+      if (data.emailSent) toast.success('Wystawiono nowy kod i wysłano go e-mailem');
+      else toast.error('Nowy kod wystawiony, ale e-mail się nie wysłał — spróbuj „Wyślij ponownie”');
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : 'Nie udało się wystawić nowego kodu');
+    } finally {
+      setTicketBusy(false);
+    }
+  }
+
   function resetFilters() {
     setStatus('');
     setEmailQuery('');
@@ -261,6 +307,10 @@ export default function AdminSubmissions() {
           {formTitle && <p className="truncate text-sm text-slate-500">{formTitle}</p>}
         </div>
         <div className="flex flex-wrap gap-2">
+          <Link to={`/admin/formularze/${id}/obecnosc`} className="btn-secondary">
+            <ScanLine className="h-4 w-4" aria-hidden />
+            Obecność
+          </Link>
           <a className="btn-secondary" href={`/api/forms/${id}/submissions.csv`}>
             <Download className="h-4 w-4" aria-hidden />
             Eksport CSV
@@ -472,6 +522,9 @@ export default function AdminSubmissions() {
             editAnswers={editAnswers}
             setEditAnswers={setEditAnswers}
             onCopyEmail={copyEmail}
+            onResendTicket={() => void resendTicket()}
+            onReissueTicket={() => void reissueTicket()}
+            ticketBusy={ticketBusy}
           />
         )}
       </Drawer>
@@ -486,6 +539,9 @@ interface DetailBodyProps {
   editAnswers: Answers;
   setEditAnswers: (value: Answers) => void;
   onCopyEmail: (email: string) => void;
+  onResendTicket: () => void;
+  onReissueTicket: () => void;
+  ticketBusy: boolean;
 }
 
 function SubmissionDetailBody({
@@ -495,6 +551,9 @@ function SubmissionDetailBody({
   editAnswers,
   setEditAnswers,
   onCopyEmail,
+  onResendTicket,
+  onReissueTicket,
+  ticketBusy,
 }: DetailBodyProps) {
   const sections = detail.schemaSnapshotJson.sections.filter((section) => section.fields.length > 0);
   const payments = detail.payments ?? [];
@@ -549,7 +608,52 @@ function SubmissionDetailBody({
             )}
           </dd>
         </div>
+        {detail.status === 'PAID' && (
+          <div>
+            <dt className="text-xs text-slate-500">Obecność</dt>
+            <dd className="mt-1">
+              {detail.checkedInAt ? (
+                <span className="inline-flex items-center gap-1.5 font-medium text-emerald-700">
+                  <UserRoundCheck className="h-4 w-4" aria-hidden />
+                  Wejście {formatDateTime(detail.checkedInAt)}
+                  {detail.checkedInStationName ? ` · ${detail.checkedInStationName}` : ''}
+                </span>
+              ) : (
+                <span className="text-slate-500">Brak wejścia</span>
+              )}
+            </dd>
+          </div>
+        )}
       </dl>
+
+      {detail.status === 'PAID' && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 p-4">
+          <div className="flex items-center gap-3">
+            <QrCode className="h-5 w-5 text-brand-600" aria-hidden />
+            <div>
+              <p className="text-sm font-medium text-slate-900">
+                Bilet QR <span className="font-mono text-slate-500">#{detail.ticketReference}</span>
+              </p>
+              <p className="text-xs text-slate-500">{detail.ticketIssued ? 'Wystawiony' : 'Jeszcze nie wysłany'}</p>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button type="button" className="btn-secondary" disabled={ticketBusy} onClick={onResendTicket}>
+              <Send className="h-4 w-4" aria-hidden />
+              {detail.ticketIssued ? 'Wyślij ponownie' : 'Wyślij bilet'}
+            </button>
+            {detail.ticketIssued && (
+              <IconButton
+                icon={RefreshCw}
+                label="Unieważnij kod i wystaw nowy"
+                tone="danger"
+                disabled={ticketBusy}
+                onClick={onReissueTicket}
+              />
+            )}
+          </div>
+        </div>
+      )}
 
       {payments.length > 0 && (
         <div>

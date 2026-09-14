@@ -18,15 +18,46 @@ function getTransporter(): Transporter {
   return transporter;
 }
 
+export interface InlineImage {
+  cid: string;
+  filename: string;
+  content: Buffer;
+}
+
 /** Nigdy nie rzuca — awaria SMTP nie może wywrócić rejestracji ani obsługi webhooka. */
-export async function sendMail(to: string, subject: string, html: string, text: string): Promise<boolean> {
+export async function sendMail(
+  to: string,
+  subject: string,
+  html: string,
+  text: string,
+  inlineImages: InlineImage[] = [],
+): Promise<boolean> {
   try {
-    await getTransporter().sendMail({ from: env().MAIL_FROM, to, subject, html, text });
+    await getTransporter().sendMail({
+      from: env().MAIL_FROM,
+      to,
+      subject,
+      html,
+      text,
+      // Obrazy jako załączniki CID — Gmail i Outlook blokują obrazki `data:` w treści.
+      attachments: inlineImages.map((image) => ({
+        cid: image.cid,
+        filename: image.filename,
+        content: image.content,
+        contentType: 'image/png',
+      })),
+    });
     return true;
   } catch (error) {
     console.error(`[mailer] nie udało się wysłać e-maila do ${to}:`, error);
     return false;
   }
+}
+
+/** Bilet z kodem QR osadzonym w wiadomości jako obraz CID. */
+export interface TicketQrData {
+  cid: string;
+  reference: string;
 }
 
 interface TicketEmailData {
@@ -37,6 +68,7 @@ interface TicketEmailData {
   /** Ustawiane przez organizatora w edytorze formularza — nadpisują domyślny tytuł/treść. */
   customTitle?: string | null;
   customBody?: string | null;
+  ticketQr?: TicketQrData | null;
 }
 
 function escapeHtml(value: string): string {
@@ -113,6 +145,27 @@ function ticketDetailsHtml(data: TicketEmailData): string {
   </table>`;
 }
 
+function ticketQrHtml(qr: TicketQrData | null | undefined): string {
+  if (!qr) return '';
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:8px 0 16px;border:1px solid #dbf3f5;border-radius:12px;">
+    <tr><td align="center" style="padding:20px 16px 8px;font-size:13px;font-weight:600;color:#24757a;text-transform:uppercase;letter-spacing:1px;">Twój bilet wstępu</td></tr>
+    <tr><td align="center" style="padding:4px 16px;">
+      <img src="cid:${qr.cid}" width="220" height="220" alt="Kod QR biletu" style="display:block;margin:0 auto;width:220px;height:220px;" />
+    </td></tr>
+    <tr><td align="center" style="padding:8px 16px 4px;font-size:14px;color:#0d3135;">Pokaż ten kod przy wejściu na wydarzenie.</td></tr>
+    <tr><td align="center" style="padding:0 16px 18px;font-size:12px;color:#5b7a7d;">Nr biletu: <strong style="font-family:monospace;color:#0d3135;">${escapeHtml(qr.reference)}</strong> · kod jest jednorazowy — nie udostępniaj go innym</td></tr>
+  </table>`;
+}
+
+function ticketQrText(qr: TicketQrData | null | undefined): string[] {
+  if (!qr) return [];
+  return [
+    '',
+    `Twój bilet wstępu: kod QR znajdziesz w wersji HTML tej wiadomości. Nr biletu: ${qr.reference}.`,
+    'Kod jest jednorazowy — nie udostępniaj go innym.',
+  ];
+}
+
 function buttonHtml(url: string, label: string): string {
   return `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:20px auto 4px;">
     <tr><td style="border-radius:10px;background-color:#30a0a6;">
@@ -136,6 +189,7 @@ export function buildFreeConfirmationEmail(data: TicketEmailData & { confirmatio
   const defaultIntro = 'Twoja rejestracja na wydarzenie została potwierdzona. Poniżej znajdziesz szczegóły zgłoszenia.';
   const bodyHtml = [
     introHtml(defaultIntro, data.customBody),
+    ticketQrHtml(data.ticketQr),
     ticketDetailsHtml(data),
     buttonHtml(data.confirmationUrl, 'Sprawdź status zgłoszenia'),
     `<p style="margin:16px 0 0;font-size:13px;color:#5b7a7d;">Zachowaj ten link — pod nim zawsze sprawdzisz status swojego zgłoszenia.</p>`,
@@ -146,6 +200,7 @@ export function buildFreeConfirmationEmail(data: TicketEmailData & { confirmatio
     introText(defaultIntro, data.customBody),
     '',
     `Bilet: ${data.ticketName} (${formatAmount(data.amountCents, data.currency)})`,
+    ...ticketQrText(data.ticketQr),
     '',
     `Status zgłoszenia: ${data.confirmationUrl}`,
   ].join('\n');
@@ -167,6 +222,7 @@ export function buildPaidConfirmationEmail(data: TicketEmailData & { formSlug: s
   const defaultIntro = 'Twoja płatność została potwierdzona — bilet jest Twój! Poniżej znajdziesz szczegóły zakupu.';
   const bodyHtml = [
     introHtml(defaultIntro, data.customBody),
+    ticketQrHtml(data.ticketQr),
     ticketDetailsHtml(data),
     buttonHtml(eventUrl, 'Zobacz stronę wydarzenia'),
   ].join('');
@@ -176,8 +232,35 @@ export function buildPaidConfirmationEmail(data: TicketEmailData & { formSlug: s
     introText(defaultIntro, data.customBody),
     '',
     `Bilet: ${data.ticketName} (${formatAmount(data.amountCents, data.currency)})`,
+    ...ticketQrText(data.ticketQr),
     '',
     `Strona wydarzenia: ${eventUrl}`,
+  ].join('\n');
+  return { subject, html: shellHtml(heading, bodyHtml), text };
+}
+
+/** Sam bilet — ponowna wysyłka przez organizatora lub nowy kod po unieważnieniu poprzedniego. */
+export function buildTicketEmail(
+  data: TicketEmailData & { formSlug: string; ticketQr: TicketQrData; reissued: boolean },
+): EmailContent {
+  const heading = data.reissued ? 'Nowy kod QR biletu' : 'Twój bilet wstępu';
+  const subject = `${heading} — ${data.formTitle}`;
+  const intro = data.reissued
+    ? 'Organizator wystawił dla Ciebie nowy kod QR. Poprzedni kod jest już nieważny — przy wejściu pokaż ten poniżej.'
+    : 'Przesyłamy Twój bilet wstępu. Pokaż poniższy kod QR przy wejściu na wydarzenie.';
+  const bodyHtml = [
+    introHtml(intro, null),
+    ticketQrHtml(data.ticketQr),
+    ticketDetailsHtml(data),
+    buttonHtml(`${baseUrl()}/f/${data.formSlug}`, 'Zobacz stronę wydarzenia'),
+  ].join('');
+  const text = [
+    `${heading} — ${data.formTitle}`,
+    '',
+    intro,
+    '',
+    `Bilet: ${data.ticketName}`,
+    ...ticketQrText(data.ticketQr),
   ].join('\n');
   return { subject, html: shellHtml(heading, bodyHtml), text };
 }

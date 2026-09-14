@@ -252,4 +252,7 @@ export interface SubmissionStatusDto {
   formTitle: string;
   formSlug: string;
   confirmationEmailSent: boolean;
+  /** Numer biletu — obecny tylko dla opłaconego zgłoszenia, wtedy dostępny jest też obraz QR. */
+  ticketReference: string | null;
+  checkedInAt: string | null;
 }

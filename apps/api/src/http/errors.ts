@@ -22,6 +22,7 @@ export const notFound = (message = 'Nie znaleziono') => new AppError(404, 'NOT_F
 export const conflict = (message: string, code = 'CONFLICT') => new AppError(409, code, message);
 export const gone = (message: string, code = 'GONE') => new AppError(410, code, message);
 export const badGateway = (message: string) => new AppError(502, 'UPSTREAM_ERROR', message);
+export const tooManyRequests = (message: string) => new AppError(429, 'RATE_LIMITED', message);
 
 export function errorHandler(error: unknown, req: Request, res: Response, _next: NextFunction) {
   if (error instanceof ZodError) {

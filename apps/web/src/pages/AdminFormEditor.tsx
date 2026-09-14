@@ -17,6 +17,7 @@ import {
   LoaderCircle,
   Mail,
   Save,
+  ScanLine,
   Ticket,
   TicketPercent,
   TriangleAlert,
@@ -670,6 +671,10 @@ export default function AdminFormEditor() {
             <Link to={`/admin/formularze/${form.id}/zgloszenia`} className="btn-secondary">
               <Users className="h-4 w-4" aria-hidden />
               Zgłoszenia
+            </Link>
+            <Link to={`/admin/formularze/${form.id}/obecnosc`} className="btn-secondary">
+              <ScanLine className="h-4 w-4" aria-hidden />
+              Obecność
             </Link>
             {/* Publiczny formularz działa tylko dla opublikowanych wydarzeń — szkic dałby stronę "niedostępny". */}
             {form.status === 'PUBLISHED' && (

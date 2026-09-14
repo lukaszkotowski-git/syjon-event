@@ -5,6 +5,7 @@ import { createPayment, PaynowTransientError } from '../paynow/client.js';
 import { decideStatusUpdate } from '../paynow/status.js';
 import { prisma } from '../prisma.js';
 import { generateIdempotencyKey } from '../utils/tokens.js';
+import { ensureTicketNonce, newTicketFields, ticketEmailAttachment } from './tickets.js';
 
 export function confirmationUrl(submissionId: string, publicToken: string): string {
   const base = env().APP_BASE_URL.replace(/\/+$/, '');
@@ -92,6 +93,8 @@ async function sendPaidConfirmationEmailIfNeeded(submissionId: string): Promise<
   });
   if (!submission || submission.confirmationEmailSentAt) return;
 
+  const nonce = await ensureTicketNonce(submission.id);
+  const ticket = nonce ? await ticketEmailAttachment(submission.id, nonce) : null;
   const { subject, html, text } = buildPaidConfirmationEmail({
     formTitle: submission.form.title,
     formSlug: submission.form.slug,
@@ -100,9 +103,10 @@ async function sendPaidConfirmationEmailIfNeeded(submissionId: string): Promise<
     currency: submission.currency,
     customTitle: submission.form.confirmationEmailTitle,
     customBody: submission.form.confirmationEmailBody,
+    ticketQr: ticket?.ticketQr,
   });
 
-  const sent = await sendMail(submission.buyerEmail, subject, html, text);
+  const sent = await sendMail(submission.buyerEmail, subject, html, text, ticket ? [ticket.image] : []);
   if (sent) {
     await prisma.submission.update({
       where: { id: submissionId },
@@ -152,7 +156,7 @@ export async function applyProviderStatus(input: ApplyStatusInput): Promise<Appl
     if (input.incomingStatus === 'CONFIRMED' && payment.submission.status !== 'PAID') {
       await tx.submission.update({
         where: { id: payment.submissionId },
-        data: { status: 'PAID', reservationExpiresAt: null },
+        data: { status: 'PAID', reservationExpiresAt: null, ...newTicketFields() },
       });
       submissionPaid = true;
 

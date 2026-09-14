@@ -9,6 +9,7 @@ import {
   Copy,
   Hourglass,
   MailCheck,
+  QrCode,
   RefreshCw,
   TriangleAlert,
   type LucideIcon,
@@ -210,6 +211,30 @@ export default function Confirmation() {
                 </div>
               )}
             </div>
+            {status.ticketReference && (
+              <div className="rounded-2xl border border-slate-200 p-4">
+                <p className="flex items-center justify-center gap-1.5 text-xs font-semibold uppercase tracking-widest text-brand-700/80">
+                  <QrCode className="h-3.5 w-3.5" aria-hidden />
+                  Twój bilet wstępu
+                </p>
+                <img
+                  src={`/api/public/submissions/${submissionId}/ticket.png?token=${encodeURIComponent(token)}`}
+                  alt="Kod QR biletu"
+                  className="mx-auto mt-3 aspect-square w-full max-w-[14rem]"
+                />
+                <p className="mt-2 text-sm text-slate-600">
+                  Pokaż ten kod przy wejściu · nr biletu{' '}
+                  <span className="font-mono font-semibold text-slate-900">{status.ticketReference}</span>
+                </p>
+                <p className="mt-1 text-xs text-slate-500">Kod jest jednorazowy — nie udostępniaj go innym.</p>
+                {status.checkedInAt && (
+                  <p className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-sm font-medium text-emerald-700">
+                    <CircleCheck className="h-4 w-4" aria-hidden />
+                    Wejście zarejestrowane {new Date(status.checkedInAt).toLocaleString('pl-PL', { dateStyle: 'short', timeStyle: 'short' })}
+                  </p>
+                )}
+              </div>
+            )}
             {status.confirmationEmailSent && (
               <p className="flex items-center justify-center gap-2 text-sm text-emerald-700">
                 <MailCheck className="h-4 w-4" aria-hidden />

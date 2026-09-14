@@ -14,6 +14,8 @@ import { asyncHandler } from '../http/async-handler.js';
 import { conflict, gone, notFound } from '../http/errors.js';
 import { getPaymentStatus } from '../paynow/client.js';
 import { buildFreeConfirmationEmail, sendMail } from '../services/mailer.js';
+import { ensureTicketNonce, renderTicketQrPng, ticketEmailAttachment } from '../services/tickets.js';
+import { ticketReference } from '../utils/ticket-code.js';
 import { prisma } from '../prisma.js';
 import { countOccupancy } from '../services/capacity.js';
 import {
@@ -132,6 +134,9 @@ publicRouter.post(
     const confirmation = confirmationUrl(submission.id, publicToken);
 
     if (submission.status === 'PAID') {
+      const ticket = submission.ticketNonce
+        ? await ticketEmailAttachment(submission.id, submission.ticketNonce)
+        : null;
       const { subject, html, text } = buildFreeConfirmationEmail({
         formTitle: form.title,
         ticketName: submission.ticketNameSnapshot,
@@ -140,8 +145,9 @@ publicRouter.post(
         customTitle: form.confirmationEmailTitle,
         customBody: form.confirmationEmailBody,
         confirmationUrl: confirmation,
+        ticketQr: ticket?.ticketQr,
       });
-      const sent = await sendMail(submission.buyerEmail, subject, html, text);
+      const sent = await sendMail(submission.buyerEmail, subject, html, text, ticket ? [ticket.image] : []);
       if (sent) {
         await prisma.submission.update({
           where: { id: submission.id },
@@ -254,8 +260,26 @@ publicRouter.get(
       formTitle: submissionRecord.form.title,
       formSlug: submissionRecord.form.slug,
       confirmationEmailSent: fresh.confirmationEmailSentAt !== null,
+      ticketReference: fresh.status === 'PAID' ? ticketReference(fresh.id) : null,
+      checkedInAt: fresh.checkedInAt?.toISOString() ?? null,
     };
     res.json(dto);
+  }),
+);
+
+publicRouter.get(
+  '/submissions/:id/ticket.png',
+  asyncHandler(async (req, res) => {
+    const submission = await prisma.submission.findUnique({ where: { id: req.params.id as string } });
+    if (!submission) throw notFound('Nie znaleziono zgłoszenia');
+    assertPublicToken(submission, extractToken(req as never));
+
+    const nonce = await ensureTicketNonce(submission.id);
+    if (!nonce) throw notFound('Bilet jest dostępny dopiero po potwierdzeniu zgłoszenia');
+
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.send(await renderTicketQrPng(submission.id, nonce));
   }),
 );
 

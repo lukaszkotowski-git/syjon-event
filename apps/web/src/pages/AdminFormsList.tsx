@@ -11,6 +11,7 @@ import {
   Hourglass,
   Lock,
   Pencil,
+  ScanLine,
   Plus,
   Trash2,
   Users,
@@ -333,6 +334,14 @@ export default function AdminFormsList() {
                     {form.submissionCount}
                   </span>
                 </Link>
+                {form.paidCount > 0 && (
+                  <IconButton
+                    icon={ScanLine}
+                    label="Obecność i skanowanie"
+                    size="lg"
+                    onClick={() => navigate(`/admin/formularze/${form.id}/obecnosc`)}
+                  />
+                )}
                 <IconButton
                   icon={Pencil}
                   label="Edytuj"
