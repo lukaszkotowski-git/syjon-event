@@ -1,158 +1,92 @@
-import { useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { ArrowRight, CalendarDays, TicketX } from 'lucide-react';
+import type { PublicEventListItemDto } from '@syjonevent/shared';
 import { api, ApiError } from '../lib/api';
 import { PRIVACY_POLICY_URL, TERMS_URL } from '../lib/legal';
 
-type EventIconType = 'fireworks' | 'beach' | 'ski' | 'disco' | 'camp' | 'picnic';
-
-function EventIcon({ type, className }: { type: EventIconType; className?: string }) {
-  const common = { viewBox: '0 0 24 24', fill: 'none', className };
-  switch (type) {
-    case 'fireworks':
-      return (
-        <svg {...common}>
-          <path
-            d="M12 2v6M12 16v6M4.2 4.2l4.2 4.2M15.6 15.6l4.2 4.2M2 12h6M16 12h6M4.2 19.8l4.2-4.2M15.6 8.4l4.2-4.2"
-            stroke="currentColor"
-            strokeWidth={1.7}
-            strokeLinecap="round"
-          />
-        </svg>
-      );
-    case 'beach':
-      return (
-        <svg {...common}>
-          <circle cx="12" cy="9.5" r="3.4" stroke="currentColor" strokeWidth={1.7} />
-          <path
-            d="M12 3.3v1.6M5.4 9.5H3.8M20.2 9.5h-1.6M7.2 5l1.1 1.1M16.8 5l-1.1 1.1"
-            stroke="currentColor"
-            strokeWidth={1.7}
-            strokeLinecap="round"
-          />
-          <path
-            d="M2.5 18c1.6-1.5 3.2-1.5 4.8 0s3.2 1.5 4.8 0 3.2-1.5 4.8 0 3.2 1.5 4.8 0"
-            stroke="currentColor"
-            strokeWidth={1.7}
-            strokeLinecap="round"
-          />
-        </svg>
-      );
-    case 'ski':
-      return (
-        <svg {...common}>
-          <path
-            d="M2.5 18.5 8 9l3 4.2 2-2.8L20 18.5H2.5Z"
-            stroke="currentColor"
-            strokeWidth={1.7}
-            strokeLinejoin="round"
-          />
-          <path
-            d="M18 4.5v4M16.3 5.8l3.4 1.4M19.7 5.8l-3.4 1.4"
-            stroke="currentColor"
-            strokeWidth={1.7}
-            strokeLinecap="round"
-          />
-        </svg>
-      );
-    case 'disco':
-      return (
-        <svg {...common}>
-          <circle cx="12" cy="10.5" r="5.2" stroke="currentColor" strokeWidth={1.7} />
-          <path
-            d="M6.8 10.5h10.4M12 5.3v10.4M8.4 6.9l7.2 7.2M15.6 6.9l-7.2 7.2"
-            stroke="currentColor"
-            strokeWidth={1.3}
-            strokeLinecap="round"
-          />
-          <path d="M12 15.7v3.3M9.3 20.5h5.4" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" />
-        </svg>
-      );
-    case 'camp':
-      return (
-        <svg {...common}>
-          <path d="M12 4 20.5 19h-17L12 4Z" stroke="currentColor" strokeWidth={1.7} strokeLinejoin="round" />
-          <path d="M12 4v15M9.3 19l-2-3.4M14.7 19l2-3.4" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" />
-        </svg>
-      );
-    case 'picnic':
-      return (
-        <svg {...common}>
-          <circle cx="8.7" cy="8.2" r="2.4" stroke="currentColor" strokeWidth={1.7} />
-          <circle cx="15.8" cy="9.3" r="2" stroke="currentColor" strokeWidth={1.7} />
-          <path
-            d="M4 19.2c.5-3.2 2.3-5.2 4.9-5.2s4.4 2 4.9 5.2M14.2 19.2c.3-2.3 1.5-4 3.4-4.4"
-            stroke="currentColor"
-            strokeWidth={1.7}
-            strokeLinecap="round"
-          />
-        </svg>
-      );
-  }
-}
-
-interface SampleEvent {
-  icon: EventIconType;
-  title: string;
-  description: string;
-  gradient: string;
-}
-
-const SAMPLE_EVENTS: SampleEvent[] = [
+const SOCIAL_LINKS = [
   {
-    icon: 'fireworks',
-    title: 'Sylwester',
-    description: 'Wspólne powitanie Nowego Roku z biletami i limitem miejsc.',
-    gradient: 'from-brand-950 via-brand-800 to-brand-600',
+    label: 'Facebook',
+    href: 'https://www.facebook.com/wspolnota.syjon.waw',
+    icon: <path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z" />,
   },
   {
-    icon: 'beach',
-    title: 'Wyjazd wakacyjny',
-    description: 'Kilkudniowy wyjazd z zapisami, zaliczkami i kartą uczestnika.',
-    gradient: 'from-brand-300 via-brand-200 to-brand-50',
+    label: 'YouTube',
+    href: 'https://www.youtube.com/channel/UCvyDmZjgG5AfxiZWluYVuvw/featured',
+    icon: (
+      <>
+        <path d="M22.54 6.42a2.78 2.78 0 0 0-1.94-2C18.88 4 12 4 12 4s-6.88 0-8.6.46a2.78 2.78 0 0 0-1.94 2A29 29 0 0 0 1 11.75a29 29 0 0 0 .46 5.33A2.78 2.78 0 0 0 3.4 19c1.72.46 8.6.46 8.6.46s6.88 0 8.6-.46a2.78 2.78 0 0 0 1.94-2 29 29 0 0 0 .46-5.25 29 29 0 0 0-.46-5.33z" />
+        <polygon points="9.75 15.02 15.5 11.75 9.75 8.48 9.75 15.02" />
+      </>
+    ),
   },
   {
-    icon: 'ski',
-    title: 'Wyjazd na narty',
-    description: 'Rejestracja na obóz zimowy z wyborem pakietu i terminu.',
-    gradient: 'from-brand-900 via-brand-700 to-brand-400',
+    label: 'Instagram',
+    href: 'https://www.instagram.com/wspolnota_syjon/',
+    icon: (
+      <>
+        <rect width="20" height="20" x="2" y="2" rx="5" ry="5" />
+        <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z" />
+        <line x1="17.5" x2="17.5" y1="6.5" y2="6.5" />
+      </>
+    ),
   },
   {
-    icon: 'disco',
-    title: 'Dyskoteka',
-    description: 'Szybki formularz wejściówek na wieczorne wydarzenie.',
-    gradient: 'from-brand-800 via-brand-600 to-brand-500',
-  },
-  {
-    icon: 'camp',
-    title: 'Rekolekcje weekendowe',
-    description: 'Zapisy grupowe z polami dodatkowymi i zgodami prawnymi.',
-    gradient: 'from-brand-700 via-brand-800 to-brand-950',
-  },
-  {
-    icon: 'picnic',
-    title: 'Piknik integracyjny',
-    description: 'Wydarzenie bezpłatne z prostym formularzem obecności.',
-    gradient: 'from-brand-400 via-brand-500 to-brand-700',
+    label: 'TikTok',
+    href: 'https://www.tiktok.com/@wspolnota_syjon',
+    icon: (
+      <>
+        <path d="M13 4v12a4 4 0 1 1-4-4" />
+        <path d="M13 8a4 4 0 0 0 4 4v3" />
+      </>
+    ),
   },
 ];
 
-const FEATURES = [
-  {
-    title: 'Formularze na miarę',
-    description: 'Buduj sekcje i pola dopasowane do każdego wydarzenia — bez kodu, w kilka minut.',
-    path: 'M4 6h16M4 12h10M4 18h7',
-  },
-  {
-    title: 'Płatności online',
-    description: 'Bilety płatne i darmowe, limity miejsc i rezerwacje pilnowane automatycznie.',
-    path: 'M3 8h18M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2M3 8v8a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8M7 16h4',
-  },
-  {
-    title: 'Panel dla organizatorów',
-    description: 'Zgłoszenia, eksport CSV i zarządzanie wydarzeniami w jednym miejscu.',
-    path: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 5v4l3 2',
-  },
-];
+const eventDateFormat = new Intl.DateTimeFormat('pl-PL', { day: 'numeric', month: 'long', year: 'numeric' });
+const closesFormat = new Intl.DateTimeFormat('pl-PL', { day: 'numeric', month: 'short' });
+
+function EventCard({ event }: { event: PublicEventListItemDto }) {
+  return (
+    <Link
+      to={`/f/${event.slug}`}
+      className="group relative flex aspect-[4/5] flex-col justify-end overflow-hidden rounded-3xl bg-brand-gradient shadow-card transition duration-300 hover:-translate-y-1 hover:shadow-soft"
+    >
+      {event.imageUrl && (
+        <img
+          src={event.imageUrl}
+          alt=""
+          className="absolute inset-0 h-full w-full object-cover transition duration-500 group-hover:scale-105"
+        />
+      )}
+      <div aria-hidden className="absolute inset-0 bg-gradient-to-t from-brand-950/90 via-brand-950/45 to-brand-950/10" />
+
+      <span className="badge absolute left-4 top-4 items-center gap-1.5 bg-white/15 text-white backdrop-blur">
+        <CalendarDays className="h-3.5 w-3.5" aria-hidden />
+        {eventDateFormat.format(new Date(event.eventDate))}
+      </span>
+      {event.soldOut && (
+        <span className="badge absolute right-4 top-4 items-center gap-1.5 bg-amber-100 text-amber-900">
+          <TicketX className="h-3.5 w-3.5" aria-hidden />
+          Brak miejsc
+        </span>
+      )}
+
+      <div className="relative p-5">
+        <h3 className="font-display text-lg font-semibold text-white">{event.title}</h3>
+        {event.summary && <p className="mt-1.5 line-clamp-3 text-sm text-brand-50/90">{event.summary}</p>}
+        <p className="mt-3 flex items-center gap-1.5 text-sm font-medium text-white">
+          {event.soldOut ? 'Zobacz szczegóły' : 'Zapisz się'}
+          <ArrowRight className="h-4 w-4 transition group-hover:translate-x-0.5" aria-hidden />
+          <span className="ml-auto text-xs font-normal text-brand-100/80">
+            zapisy do {closesFormat.format(new Date(event.closesAt))}
+          </span>
+        </p>
+      </div>
+    </Link>
+  );
+}
 
 function LoginPanel({ onClose }: { onClose: () => void }) {
   const navigate = useNavigate();
@@ -214,6 +148,15 @@ function LoginPanel({ onClose }: { onClose: () => void }) {
 export default function Home() {
   const [loginOpen, setLoginOpen] = useState(false);
   const eventsRef = useRef<HTMLDivElement | null>(null);
+  const [events, setEvents] = useState<PublicEventListItemDto[] | null>(null);
+
+  useEffect(() => {
+    api
+      .get<{ events: PublicEventListItemDto[] }>('/api/public/events')
+      // Awaria listy nie może zasłonić reszty strony — pokazujemy wtedy pusty stan.
+      .then((data) => setEvents(data.events))
+      .catch(() => setEvents([]));
+  }, []);
 
   return (
     <main className="min-h-screen bg-white text-slate-900">
@@ -263,69 +206,42 @@ export default function Home() {
               onClick={() => eventsRef.current?.scrollIntoView({ behavior: 'smooth' })}
               className="btn-primary bg-white text-brand-800 shadow-soft hover:bg-brand-50 active:bg-brand-100"
             >
-              Zobacz przykładowe wydarzenia
+              Zobacz wydarzenia
             </button>
           </div>
         </div>
       </section>
 
-      {/* Sample events */}
+      {/* Otwarte zapisy */}
       <section ref={eventsRef} className="mx-auto max-w-6xl px-6 py-20 sm:py-24">
         <div className="mx-auto max-w-2xl text-center">
-          <h2 className="text-3xl font-bold text-slate-900">Do jakich wydarzeń pasuje Syjon Event?</h2>
+          <h2 className="text-3xl font-bold text-slate-900">Wydarzenia z otwartymi zapisami</h2>
           <p className="mt-3 text-slate-500">
-            Poniżej kilka przykładów — Twój formularz może wyglądać zupełnie inaczej, dopasowany do konkretnego
-            wydarzenia.
+            Wybierz wydarzenie i zapisz się w kilka chwil. Zapisy zamykają się w terminie podanym na kafelku.
           </p>
         </div>
 
-        <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-          {SAMPLE_EVENTS.map((event) => (
-            <div
-              key={event.title}
-              className={`group relative aspect-[4/5] overflow-hidden rounded-3xl bg-gradient-to-br shadow-card transition duration-300 hover:-translate-y-1 hover:shadow-soft ${event.gradient}`}
-            >
-              <div
-                aria-hidden
-                className="absolute inset-0 opacity-[0.15]"
-                style={{
-                  backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.9) 1px, transparent 1px)',
-                  backgroundSize: '18px 18px',
-                }}
-              />
-              <span className="badge absolute right-4 top-4 bg-white/15 text-white backdrop-blur">Przykład</span>
-              <div className="flex h-full items-center justify-center">
-                <EventIcon type={event.icon} className="h-16 w-16 text-white/90 transition group-hover:scale-110" />
-              </div>
-              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-brand-950/80 via-brand-950/30 to-transparent p-5 pt-12">
-                <h3 className="font-display text-lg font-semibold text-white">{event.title}</h3>
-                <p className="mt-1 text-sm text-brand-50/90">{event.description}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* Features */}
-      <section className="bg-brand-gradient-soft">
-        <div className="mx-auto max-w-6xl px-6 py-20 sm:py-24">
-          <div className="mx-auto max-w-2xl text-center">
-            <h2 className="text-3xl font-bold text-brand-900">Wszystko, czego potrzebuje organizator</h2>
-          </div>
-          <div className="mt-12 grid gap-6 sm:grid-cols-3">
-            {FEATURES.map((feature) => (
-              <div key={feature.title} className="card">
-                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-100 text-brand-700">
-                  <svg viewBox="0 0 24 24" fill="none" className="h-6 w-6">
-                    <path d={feature.path} stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </div>
-                <h3 className="mt-4 font-display text-base font-semibold text-slate-900">{feature.title}</h3>
-                <p className="mt-1.5 text-sm text-slate-500">{feature.description}</p>
-              </div>
+        {events === null ? (
+          <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-3" aria-busy="true" aria-label="Ładowanie wydarzeń">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="aspect-[4/5] animate-pulse rounded-3xl bg-slate-100" />
             ))}
           </div>
-        </div>
+        ) : events.length === 0 ? (
+          <div className="mx-auto mt-12 max-w-md rounded-3xl border border-dashed border-slate-300 px-6 py-12 text-center">
+            <CalendarDays className="mx-auto h-10 w-10 text-slate-300" aria-hidden />
+            <p className="mt-4 font-display text-lg font-semibold text-slate-800">Brak otwartych zapisów</p>
+            <p className="mt-1.5 text-sm text-slate-500">
+              Obecnie nie prowadzimy zapisów na żadne wydarzenie. Zajrzyj tu ponownie za jakiś czas.
+            </p>
+          </div>
+        ) : (
+          <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            {events.map((event) => (
+              <EventCard key={event.slug} event={event} />
+            ))}
+          </div>
+        )}
       </section>
 
       {/* Footer */}
@@ -356,6 +272,30 @@ export default function Home() {
               Regulamin serwisu internetowego
             </a>
           </nav>
+          <div className="flex items-center gap-4">
+            {SOCIAL_LINKS.map((social) => (
+              <a
+                key={social.label}
+                href={social.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={social.label}
+                className="text-slate-400 transition hover:text-brand-700"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={1.8}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="h-5 w-5"
+                >
+                  {social.icon}
+                </svg>
+              </a>
+            ))}
+          </div>
         </div>
       </footer>
     </main>

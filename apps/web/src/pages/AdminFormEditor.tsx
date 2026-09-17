@@ -3,6 +3,7 @@ import { Link, useBlocker, useNavigate, useParams } from 'react-router-dom';
 import {
   Archive,
   ArrowLeft,
+  Braces,
   CircleCheck,
   CircleX,
   Code,
@@ -20,11 +21,20 @@ import {
   ScanLine,
   Ticket,
   TicketPercent,
+  Trash2,
   TriangleAlert,
   Users,
   type LucideIcon,
 } from 'lucide-react';
-import type { DiscountCodeDto, FormSection } from '@syjonevent/shared';
+import {
+  EMAIL_BUILTIN_VARIABLES,
+  flattenSections,
+  knownVariableNames,
+  normalizeVariableName,
+  templateVariableNames,
+  type DiscountCodeDto,
+  type FormSection,
+} from '@syjonevent/shared';
 import SectionBuilder, { sectionBuilderErrors } from '../components/SectionBuilder';
 import RichTextEditor from '../components/RichTextEditor';
 import BackgroundUploader from '../components/editor/BackgroundUploader';
@@ -213,6 +223,22 @@ function snapshot(state: EditorState): string {
   });
 }
 
+function VariableChip({ name, label, onInsert }: { name: string; label: string; onInsert: (name: string) => void }) {
+  return (
+    <button
+      type="button"
+      title={`Wstaw {{${name}}}`}
+      // Bez tego kliknięcie zabiera fokus z pola i nie wiemy, gdzie był kursor.
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={() => onInsert(name)}
+      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 transition hover:border-brand-300 hover:bg-brand-50"
+    >
+      {label}
+      <code className="font-mono text-[11px] text-slate-400">{`{{${name}}}`}</code>
+    </button>
+  );
+}
+
 function EditorCard({
   id,
   icon: Icon,
@@ -249,6 +275,9 @@ export default function AdminFormEditor() {
   const confirm = useConfirm();
   const isNew = !id;
   const formRef = useRef<HTMLFormElement>(null);
+  const emailTitleRef = useRef<HTMLInputElement>(null);
+  const emailBodyRef = useRef<HTMLTextAreaElement>(null);
+  const emailTargetRef = useRef<'confirmationEmailTitle' | 'confirmationEmailBody'>('confirmationEmailBody');
 
   const [initial] = useState(emptyState);
   const [form, setForm] = useState<FormDetails | null>(null);
@@ -558,6 +587,25 @@ export default function AdminFormEditor() {
     }
   }
 
+  async function deleteForever() {
+    if (!form) return;
+    const ok = await confirm({
+      title: 'Usunąć wydarzenie trwale?',
+      description:
+        'Wydarzenie oraz wszystkie powiązane dane — zgłoszenia, płatności, kody rabatowe i bilety — zostaną nieodwracalnie usunięte z bazy danych. Tej operacji nie można cofnąć.',
+      confirmLabel: 'Usuń trwale',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    try {
+      await api.delete(`/api/forms/${form.id}?force=true`);
+      toast.success('Wydarzenie usunięte trwale');
+      navigate('/admin');
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : 'Nie udało się usunąć wydarzenia');
+    }
+  }
+
   async function copyPublicLink() {
     if (!form) return;
     try {
@@ -617,12 +665,27 @@ export default function AdminFormEditor() {
 
   const setField = <K extends keyof Draft>(key: K, value: Draft[K]) => setDraft((d) => ({ ...d, [key]: value }));
 
+  /** Wstawia znacznik w miejscu kursora w ostatnio edytowanym polu (tytuł albo treść). */
+  function insertEmailVariable(name: string) {
+    const key = emailTargetRef.current;
+    const element = key === 'confirmationEmailTitle' ? emailTitleRef.current : emailBodyRef.current;
+    const current = draft[key];
+    const token = `{{${name}}}`;
+    const start = element?.selectionStart ?? current.length;
+    const end = element?.selectionEnd ?? current.length;
+    setField(key, current.slice(0, start) + token + current.slice(end));
+    requestAnimationFrame(() => {
+      element?.focus();
+      element?.setSelectionRange(start + token.length, start + token.length);
+    });
+  }
+
   const moreActions: MenuItem[] = form
     ? [
         { label: 'Kopiuj link publiczny', icon: Copy, onSelect: () => void copyPublicLink() },
         ...(form.status !== 'ARCHIVED'
           ? [{ label: 'Archiwizuj', icon: Archive, tone: 'danger' as const, onSelect: () => void archive() }]
-          : []),
+          : [{ label: 'Usuń trwale', icon: Trash2, tone: 'danger' as const, onSelect: () => void deleteForever() }]),
       ]
     : [];
 
@@ -648,6 +711,29 @@ export default function AdminFormEditor() {
   }
 
   const slugChangedOnPublished = form?.status === 'PUBLISHED' && draft.slug !== form.slug;
+
+  const builtinNames = new Set<string>(EMAIL_BUILTIN_VARIABLES.map((variable) => variable.name));
+  // Pola z imieniem/nazwiskiem pomijamy — obsługują je wbudowane {{imie}}, {{nazwisko}} i {{imie_nazwisko}}.
+  const formFields = flattenSections(sections).filter(
+    (field) => field.label.trim() && !/imi[eę]|nazwisko/i.test(field.label),
+  );
+  // Czytelny znacznik z nazwy pola ({{dieta}}); klucz pola tylko przy kolizji nazw.
+  const fieldVariables = formFields.map((field) => {
+    const slug = normalizeVariableName(field.label);
+    const unique =
+      slug !== '' &&
+      !builtinNames.has(slug) &&
+      formFields.filter((other) => normalizeVariableName(other.label) === slug).length === 1;
+    return { name: unique ? slug : field.key, label: field.label };
+  });
+  const knownNames = knownVariableNames(sections);
+  const unknownEmailVariables = [
+    ...new Set(
+      templateVariableNames(`${draft.confirmationEmailTitle}\n${draft.confirmationEmailBody}`).filter(
+        (name) => !knownNames.has(name),
+      ),
+    ),
+  ];
 
   return (
     <section className="space-y-6">
@@ -953,7 +1039,7 @@ export default function AdminFormEditor() {
             id="email"
             icon={Mail}
             title="E-mail z potwierdzeniem"
-            description="Wysyłany po rejestracji na bilet bezpłatny lub po opłaceniu biletu. Dane biletu i przycisk dodają się automatycznie. Puste pole = tekst domyślny."
+            description="Wysyłany po rejestracji na bilet bezpłatny lub po opłaceniu biletu. Dane biletu, kod QR i przycisk dodają się automatycznie. Puste pole = tekst domyślny."
           >
             <div className="grid gap-4 md:grid-cols-2">
               <div>
@@ -961,10 +1047,12 @@ export default function AdminFormEditor() {
                   Tytuł
                 </label>
                 <input
+                  ref={emailTitleRef}
                   id="email-title"
                   className="input"
-                  placeholder="Rejestracja potwierdzona"
+                  placeholder="Np. {{imie}}, do zobaczenia!"
                   value={draft.confirmationEmailTitle}
+                  onFocus={() => (emailTargetRef.current = 'confirmationEmailTitle')}
                   onChange={(e) => setField('confirmationEmailTitle', e.target.value)}
                 />
               </div>
@@ -973,13 +1061,57 @@ export default function AdminFormEditor() {
                   Treść
                 </label>
                 <textarea
+                  ref={emailBodyRef}
                   id="email-body"
                   className="input h-32"
-                  placeholder="Np. Dziękujemy za rejestrację! Do zobaczenia na wydarzeniu."
+                  placeholder="Np. Cześć {{imie}}! Dziękujemy za rejestrację na {{wydarzenie}}."
                   value={draft.confirmationEmailBody}
+                  onFocus={() => (emailTargetRef.current = 'confirmationEmailBody')}
                   onChange={(e) => setField('confirmationEmailBody', e.target.value)}
                 />
               </div>
+            </div>
+
+            <div className="space-y-3 rounded-xl bg-slate-50 p-4">
+              <p className="flex flex-wrap items-center gap-x-2 text-sm font-medium text-slate-700">
+                <Braces className="h-4 w-4 text-brand-600" aria-hidden />
+                Pola dynamiczne
+                <span className="font-normal text-slate-500">— kliknij, aby wstawić w miejscu kursora</span>
+              </p>
+              <div>
+                <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-slate-400">Dane zgłoszenia</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {EMAIL_BUILTIN_VARIABLES.map((variable) => (
+                    <VariableChip key={variable.name} name={variable.name} label={variable.label} onInsert={insertEmailVariable} />
+                  ))}
+                </div>
+              </div>
+              {fieldVariables.length > 0 && (
+                <div>
+                  <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-slate-400">Pola formularza</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {fieldVariables.map((variable) => (
+                      <VariableChip key={variable.name} name={variable.name} label={variable.label} onInsert={insertEmailVariable} />
+                    ))}
+                  </div>
+                </div>
+              )}
+              <p className="text-xs text-slate-500">
+                Wielkość liter i polskie znaki nie mają znaczenia — <code className="font-mono">{'{{imię}}'}</code> działa tak
+                samo jak <code className="font-mono">{'{{imie}}'}</code>. Pole bez odpowiedzi zostaje puste.
+              </p>
+              {unknownEmailVariables.length > 0 && (
+                <p className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+                  <span>
+                    Nieznane pola:{' '}
+                    {unknownEmailVariables.map((name) => (
+                      <code key={name} className="mr-1 font-mono">{`{{${name}}}`}</code>
+                    ))}
+                    — w wysłanym e-mailu będą puste. Sprawdź pisownię lub wybierz pole z listy.
+                  </span>
+                </p>
+              )}
             </div>
           </EditorCard>
 

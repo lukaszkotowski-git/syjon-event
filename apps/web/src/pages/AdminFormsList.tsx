@@ -138,6 +138,32 @@ export default function AdminFormsList() {
     }
   }
 
+  async function purgeForm(form: FormRow) {
+    const confirmed = await confirm({
+      title: 'Usunąć wydarzenie trwale?',
+      description: (
+        <>
+          <strong className="font-medium text-slate-800">{form.title}</strong> oraz{' '}
+          <strong className="font-medium text-slate-800">wszystkie {form.submissionCount} zgłoszenia(-ń)</strong> i
+          powiązane płatności zostaną nieodwracalnie usunięte z bazy danych. Tej operacji nie można cofnąć.
+        </>
+      ),
+      confirmLabel: 'Usuń trwale wraz z danymi',
+      tone: 'danger',
+    });
+    if (!confirmed) return;
+    setBusyId(form.id);
+    try {
+      await api.delete(`/api/forms/${form.id}?force=true`);
+      setForms((prev) => prev?.filter((f) => f.id !== form.id) ?? prev);
+      toast.success('Wydarzenie usunięte trwale');
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : 'Nie udało się usunąć wydarzenia');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   const counts: Record<Tab, number> = {
     ALL: forms?.length ?? 0,
     PUBLISHED: forms?.filter((f) => f.status === 'PUBLISHED').length ?? 0,
@@ -365,18 +391,26 @@ export default function AdminFormsList() {
                     disabled={busy}
                     onClick={() => void deleteForm(form)}
                   />
+                ) : form.status !== 'ARCHIVED' ? (
+                  // Wydarzenia ze zgłoszeniami nie da się usunąć od razu — proponujemy archiwizację jako pierwszy krok.
+                  <IconButton
+                    icon={Archive}
+                    label="Archiwizuj"
+                    tone="danger"
+                    size="lg"
+                    disabled={busy}
+                    onClick={() => void archiveForm(form)}
+                  />
                 ) : (
-                  form.status !== 'ARCHIVED' && (
-                    // Wydarzenia ze zgłoszeniami nie da się usunąć (API) — proponujemy od razu archiwizację.
-                    <IconButton
-                      icon={Archive}
-                      label="Archiwizuj"
-                      tone="danger"
-                      size="lg"
-                      disabled={busy}
-                      onClick={() => void archiveForm(form)}
-                    />
-                  )
+                  // Zarchiwizowane wydarzenie ze zgłoszeniami można usunąć trwale wraz z danymi.
+                  <IconButton
+                    icon={Trash2}
+                    label="Usuń trwale"
+                    tone="danger"
+                    size="lg"
+                    disabled={busy}
+                    onClick={() => void purgeForm(form)}
+                  />
                 )}
               </div>
             </article>

@@ -157,6 +157,18 @@ export interface PublicTicketTypeDto {
   soldOut: boolean;
 }
 
+/** Kafelek wydarzenia na stronie głównej — tylko dane potrzebne do zaproszenia na formularz. */
+export interface PublicEventListItemDto {
+  slug: string;
+  title: string;
+  /** Opis bez HTML, skrócony do długości kafelka. */
+  summary: string;
+  eventDate: string;
+  closesAt: string;
+  imageUrl: string | null;
+  soldOut: boolean;
+}
+
 export interface PublicFormDto {
   slug: string;
   title: string;

@@ -276,10 +276,11 @@ adminFormsRouter.delete(
   '/:id',
   asyncHandler(async (req, res) => {
     const form = await getFormOr404(req.params.id as string);
+    const force = req.query.force === 'true';
     const submissionCount = await prisma.submission.count({ where: { formId: form.id } });
-    if (submissionCount > 0) {
+    if (submissionCount > 0 && !force) {
       throw conflict(
-        'Nie można usunąć formularza ze zgłoszeniami — zarchiwizuj go zamiast tego',
+        'Nie można usunąć formularza ze zgłoszeniami — zarchiwizuj go albo usuń trwale wraz z danymi',
         'FORM_HAS_SUBMISSIONS',
       );
     }
@@ -288,7 +289,10 @@ adminFormsRouter.delete(
     await deleteUploadedFile(form.backgroundImageMobileUrl);
 
     await prisma.$transaction([
+      // Kolejność wymuszona przez onDelete: Restrict — dzieci znikają przed rodzicami.
       prisma.checkInAttempt.deleteMany({ where: { formId: form.id } }),
+      prisma.payment.deleteMany({ where: { submission: { formId: form.id } } }),
+      prisma.submission.deleteMany({ where: { formId: form.id } }),
       prisma.scanStation.deleteMany({ where: { formId: form.id } }),
       prisma.discountCode.deleteMany({ where: { formId: form.id } }),
       prisma.ticketType.deleteMany({ where: { formId: form.id } }),

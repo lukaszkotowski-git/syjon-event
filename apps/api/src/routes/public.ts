@@ -7,12 +7,14 @@ import {
   normalizeDiscountCode,
   type CreateSubmissionResponse,
   type DiscountCodeCheckResponse,
+  type PublicEventListItemDto,
   type PublicFormDto,
   type SubmissionStatusDto,
 } from '@syjonevent/shared';
 import { asyncHandler } from '../http/async-handler.js';
 import { conflict, gone, notFound } from '../http/errors.js';
 import { getPaymentStatus } from '../paynow/client.js';
+import { renderCustomEmailContent } from '../services/email-variables.js';
 import { buildFreeConfirmationEmail, sendMail } from '../services/mailer.js';
 import { ensureTicketNonce, renderTicketQrPng, ticketEmailAttachment } from '../services/tickets.js';
 import { ticketReference } from '../utils/ticket-code.js';
@@ -41,6 +43,54 @@ const writeLimiter = rateLimit({
 });
 
 export const publicRouter: Router = Router();
+
+const SUMMARY_LENGTH = 160;
+
+/** Opis wydarzenia to HTML z edytora — na kafelku pokazujemy sam tekst. */
+function toSummary(html: string | null): string {
+  if (!html) return '';
+  const text = html
+    // Każdy znacznik zastępujemy spacją, żeby akapity nie posklejały się w jeden wyraz.
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+  return text.length > SUMMARY_LENGTH ? `${text.slice(0, SUMMARY_LENGTH).trimEnd()}…` : text;
+}
+
+/** Lista wydarzeń z otwartymi zapisami — strona główna dla osoby niezalogowanej. */
+publicRouter.get(
+  '/events',
+  asyncHandler(async (_req, res) => {
+    const now = new Date();
+    const forms = await prisma.form.findMany({
+      where: { status: 'PUBLISHED', archivedAt: null, closesAt: { gt: now } },
+      orderBy: { eventDate: 'asc' },
+    });
+
+    const events: PublicEventListItemDto[] = await Promise.all(
+      forms.map(async (form) => {
+        const occupancy = await countOccupancy(prisma, form.id, now);
+        return {
+          slug: form.slug,
+          title: form.title,
+          summary: toSummary(form.description),
+          eventDate: form.eventDate.toISOString(),
+          closesAt: form.closesAt.toISOString(),
+          imageUrl: form.backgroundImageDesktopUrl ?? form.backgroundImageMobileUrl,
+          soldOut: form.capacityTotal !== null && occupancy.total >= form.capacityTotal,
+        };
+      }),
+    );
+
+    res.json({ events });
+  }),
+);
 
 publicRouter.get(
   '/f/:slug',
@@ -142,8 +192,7 @@ publicRouter.post(
         ticketName: submission.ticketNameSnapshot,
         amountCents: submission.ticketPriceCents,
         currency: submission.currency,
-        customTitle: form.confirmationEmailTitle,
-        customBody: form.confirmationEmailBody,
+        ...renderCustomEmailContent(form, submission),
         confirmationUrl: confirmation,
         ticketQr: ticket?.ticketQr,
       });

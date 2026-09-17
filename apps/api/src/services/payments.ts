@@ -5,6 +5,7 @@ import { createPayment, PaynowTransientError } from '../paynow/client.js';
 import { decideStatusUpdate } from '../paynow/status.js';
 import { prisma } from '../prisma.js';
 import { generateIdempotencyKey } from '../utils/tokens.js';
+import { renderCustomEmailContent } from './email-variables.js';
 import { ensureTicketNonce, newTicketFields, ticketEmailAttachment } from './tickets.js';
 
 export function confirmationUrl(submissionId: string, publicToken: string): string {
@@ -101,8 +102,7 @@ async function sendPaidConfirmationEmailIfNeeded(submissionId: string): Promise<
     ticketName: submission.ticketNameSnapshot,
     amountCents: submission.ticketPriceCents,
     currency: submission.currency,
-    customTitle: submission.form.confirmationEmailTitle,
-    customBody: submission.form.confirmationEmailBody,
+    ...renderCustomEmailContent(submission.form, submission),
     ticketQr: ticket?.ticketQr,
   });
 

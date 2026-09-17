@@ -457,7 +457,7 @@ export default function PublicForm() {
                 <section className="space-y-5">
                   <StepHeading
                     icon={ListChecks}
-                    title="Dodatkowe informacje"
+                    title="Formularz rejestracyjny"
                     subtitle="Organizator prosi o uzupełnienie poniższych pól. Pola z * są wymagane."
                   />
                   {sections.map((section) => (

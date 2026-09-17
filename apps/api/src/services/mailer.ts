@@ -78,6 +78,13 @@ function escapeHtml(value: string): string {
   );
 }
 
+/** Temat z własnego tytułu; nazwę wydarzenia dopisujemy tylko, jeśli tytuł jej jeszcze nie zawiera (np. przez {{wydarzenie}}). */
+function customSubject(data: TicketEmailData): string | null {
+  const title = data.customTitle?.trim();
+  if (!title) return null;
+  return title.includes(data.formTitle) ? title : `${title} — ${data.formTitle}`;
+}
+
 function resolveTitle(defaultTitle: string, customTitle: string | null | undefined): string {
   return customTitle?.trim() || defaultTitle;
 }
@@ -183,9 +190,7 @@ interface EmailContent {
 /** Bilet bezpłatny — e-mail wysyłany synchronicznie tuż po rejestracji, może zawierać link ze statusem. */
 export function buildFreeConfirmationEmail(data: TicketEmailData & { confirmationUrl: string }): EmailContent {
   const heading = resolveTitle('Rejestracja potwierdzona', data.customTitle);
-  const subject = data.customTitle?.trim()
-    ? `${heading} — ${data.formTitle}`
-    : `Potwierdzenie rejestracji — ${data.formTitle}`;
+  const subject = customSubject(data) ?? `Potwierdzenie rejestracji — ${data.formTitle}`;
   const defaultIntro = 'Twoja rejestracja na wydarzenie została potwierdzona. Poniżej znajdziesz szczegóły zgłoszenia.';
   const bodyHtml = [
     introHtml(defaultIntro, data.customBody),
@@ -215,9 +220,7 @@ export function buildFreeConfirmationEmail(data: TicketEmailData & { confirmatio
  */
 export function buildPaidConfirmationEmail(data: TicketEmailData & { formSlug: string }): EmailContent {
   const heading = resolveTitle('Zakup potwierdzony', data.customTitle);
-  const subject = data.customTitle?.trim()
-    ? `${heading} — ${data.formTitle}`
-    : `Potwierdzenie zakupu biletu — ${data.formTitle}`;
+  const subject = customSubject(data) ?? `Potwierdzenie zakupu biletu — ${data.formTitle}`;
   const eventUrl = `${baseUrl()}/f/${data.formSlug}`;
   const defaultIntro = 'Twoja płatność została potwierdzona — bilet jest Twój! Poniżej znajdziesz szczegóły zakupu.';
   const bodyHtml = [
