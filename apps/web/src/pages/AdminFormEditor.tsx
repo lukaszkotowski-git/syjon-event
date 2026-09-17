@@ -46,7 +46,6 @@ import { useConfirm } from '../components/ui/ConfirmDialog';
 import IconButton from '../components/ui/IconButton';
 import Menu, { type MenuItem } from '../components/ui/Menu';
 import StatusBadge from '../components/ui/StatusBadge';
-import Switch from '../components/ui/Switch';
 import { useToast } from '../components/ui/Toast';
 import { api, ApiError } from '../lib/api';
 import { centsToPlnInput, normalizeHtml, parsePlnInput, slugify } from '../lib/format';
@@ -70,7 +69,6 @@ interface FormDetails {
   eventDate: string;
   closesAt: string;
   capacityTotal: number | null;
-  requirePhone: boolean;
   termsVersion: string;
   privacyPolicyVersion: string;
   paymentSuccessTitle: string | null;
@@ -98,7 +96,6 @@ interface Draft {
   eventDate: string;
   closesAt: string;
   capacityTotal: string;
-  requirePhone: boolean;
   termsVersion: string;
   privacyPolicyVersion: string;
   paymentSuccessTitle: string;
@@ -163,7 +160,6 @@ function emptyState(): EditorState {
       eventDate: toLocalInput(new Date(Date.now() + 30 * 86_400_000).toISOString()),
       closesAt: toLocalInput(new Date(Date.now() + 30 * 86_400_000).toISOString()),
       capacityTotal: '',
-      requirePhone: false,
       termsVersion: '1.0',
       privacyPolicyVersion: '1.0',
       paymentSuccessTitle: '',
@@ -189,7 +185,6 @@ function stateFromForm(form: FormDetails): EditorState {
       eventDate: toLocalInput(form.eventDate),
       closesAt: toLocalInput(form.closesAt),
       capacityTotal: form.capacityTotal?.toString() ?? '',
-      requirePhone: form.requirePhone,
       termsVersion: form.termsVersion,
       privacyPolicyVersion: form.privacyPolicyVersion,
       paymentSuccessTitle: form.paymentSuccessTitle ?? '',
@@ -470,7 +465,6 @@ export default function AdminFormEditor() {
       eventDate: new Date(draft.eventDate).toISOString(),
       closesAt: new Date(draft.closesAt).toISOString(),
       capacityTotal: draft.capacityTotal === '' ? null : Number(draft.capacityTotal),
-      requirePhone: draft.requirePhone,
       termsVersion: draft.termsVersion,
       privacyPolicyVersion: draft.privacyPolicyVersion,
       // Puste pole = brak własnej treści, czyli tekst domyślny aplikacji.
@@ -953,13 +947,6 @@ export default function AdminFormEditor() {
                 <p className="mt-1.5 text-xs text-slate-500">Łącznie dla wszystkich biletów.</p>
               </div>
             </div>
-
-            <Switch
-              checked={draft.requirePhone}
-              onChange={(value) => setField('requirePhone', value)}
-              label="Wymagaj numeru telefonu"
-              description="Bez telefonu uczestnik nie wyśle formularza."
-            />
           </EditorCard>
 
           <EditorCard

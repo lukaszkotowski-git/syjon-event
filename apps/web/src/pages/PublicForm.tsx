@@ -211,9 +211,6 @@ export default function PublicForm() {
         phone: flat.phone?.[0] ?? '',
       });
       ok = false;
-    } else if (form?.requirePhone && !buyer.phone) {
-      setBuyerErrors({ phone: 'Pole wymagane' });
-      ok = false;
     } else {
       setBuyerErrors({});
     }
@@ -662,7 +659,7 @@ export default function PublicForm() {
                     </div>
                     <div>
                       <label className="label" htmlFor="buyer-phone">
-                        Telefon {form.requirePhone ? '*' : '(opcjonalnie)'}
+                        Telefon (opcjonalnie)
                       </label>
                       <div className="relative">
                         <Phone
@@ -678,14 +675,13 @@ export default function PublicForm() {
                           placeholder="+48 601 234 567"
                           value={buyer.phone}
                           onChange={(e) => setBuyer({ ...buyer, phone: e.target.value })}
-                          required={form.requirePhone}
                         />
                       </div>
                       {buyerErrors.phone && <p className="mt-1 text-xs text-red-600">{buyerErrors.phone}</p>}
                     </div>
                     <div>
                       <label className="label" htmlFor="buyer-address">
-                        Adres (opcjonalnie)
+                        Adres
                       </label>
                       <div className="relative">
                         <MapPin

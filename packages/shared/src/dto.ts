@@ -33,7 +33,6 @@ export const createFormRequest = z.object({
   eventDate: z.string().datetime({ offset: true }),
   closesAt: z.string().datetime({ offset: true }),
   capacityTotal: z.number().int().positive().nullish(),
-  requirePhone: z.boolean().default(false),
   termsVersion: z.string().trim().min(1).max(50).default('1.0'),
   privacyPolicyVersion: z.string().trim().min(1).max(50).default('1.0'),
   paymentSuccessTitle: z.string().trim().max(200).nullish(),
@@ -182,7 +181,6 @@ export interface PublicFormDto {
   description: string | null;
   eventDate: string;
   closesAt: string;
-  requirePhone: boolean;
   termsVersion: string;
   privacyPolicyVersion: string;
   schemaJson: z.infer<typeof formSchemaJson>;

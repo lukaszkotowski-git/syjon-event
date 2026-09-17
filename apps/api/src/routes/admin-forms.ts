@@ -95,7 +95,6 @@ adminFormsRouter.post(
           eventDate: new Date(body.eventDate),
           closesAt: new Date(body.closesAt),
           capacityTotal: body.capacityTotal ?? null,
-          requirePhone: body.requirePhone,
           termsVersion: body.termsVersion,
           privacyPolicyVersion: body.privacyPolicyVersion,
           paymentSuccessTitle: body.paymentSuccessTitle ?? null,
@@ -163,7 +162,6 @@ adminFormsRouter.patch(
           ...(body.eventDate !== undefined ? { eventDate: new Date(body.eventDate) } : {}),
           ...(body.closesAt !== undefined ? { closesAt: new Date(body.closesAt) } : {}),
           ...(body.capacityTotal !== undefined ? { capacityTotal: body.capacityTotal ?? null } : {}),
-          ...(body.requirePhone !== undefined ? { requirePhone: body.requirePhone } : {}),
           ...(body.termsVersion !== undefined ? { termsVersion: body.termsVersion } : {}),
           ...(body.privacyPolicyVersion !== undefined
             ? { privacyPolicyVersion: body.privacyPolicyVersion }

@@ -10,7 +10,7 @@ import {
   type CreateSubmissionRequest,
 } from '@syjonevent/shared';
 import { env } from '../env.js';
-import { badRequest, conflict, gone, notFound } from '../http/errors.js';
+import { conflict, gone, notFound } from '../http/errors.js';
 import { prisma } from '../prisma.js';
 import { generatePublicToken, hashPublicToken } from '../utils/tokens.js';
 import { checkAvailability, lockForm } from './capacity.js';
@@ -46,10 +46,6 @@ export async function createRegistration(
 
   // Walidacja odpowiedzi po stronie serwera tym samym kodem, co na froncie.
   const answers = buildAnswersSchema(flattenSections(schema.sections)).parse(body.answers);
-
-  if (form.requirePhone && !body.buyer.phone) {
-    throw badRequest('Numer telefonu jest wymagany dla tego wydarzenia');
-  }
 
   const publicToken = generatePublicToken();
 

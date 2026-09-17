@@ -115,7 +115,6 @@ publicRouter.get(
       description: form.description,
       eventDate: form.eventDate.toISOString(),
       closesAt: form.closesAt.toISOString(),
-      requirePhone: form.requirePhone,
       termsVersion: form.termsVersion,
       privacyPolicyVersion: form.privacyPolicyVersion,
       schemaJson: parseFormSchema(form.schemaJson),
