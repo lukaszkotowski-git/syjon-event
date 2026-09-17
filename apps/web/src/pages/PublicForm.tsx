@@ -42,6 +42,23 @@ function answerDisplayValue(field: FieldDefinition, value: string | boolean | un
   return text || '—';
 }
 
+/**
+ * Maska polskiego numeru: dopisuje +48 i grupuje cyfry po 3, np. "+48 601 234 567".
+ * Najpierw zdejmuje sam prefiks +48/48 dopisany przez poprzednie sformatowanie — inaczej jego
+ * cyfry "4" i "8" byłyby przy każdym naciśnięciu klawisza ponownie doliczane jako wpisane przez użytkownika.
+ */
+function formatPlPhoneInput(raw: string): string {
+  const withoutPrefix = raw.replace(/^\s*\+?48\s*/, '');
+  let digits = withoutPrefix.replace(/\D/g, '');
+  if (digits.length > 9 && digits.startsWith('48')) {
+    digits = digits.slice(2);
+  }
+  digits = digits.slice(0, 9);
+  if (!digits) return '';
+  const groups = digits.match(/.{1,3}/g) ?? [];
+  return `+48 ${groups.join(' ')}`;
+}
+
 /** Przewija do pierwszego pola z błędem — po walidacji uczestnik od razu widzi, co poprawić. */
 function focusFirstError() {
   // Po zmianie kroku React musi najpierw wyrenderować pola z błędami.
@@ -494,9 +511,24 @@ export default function PublicForm() {
                                     id={inputId}
                                     aria-invalid={hasError || undefined}
                                     className={`input ${hasError ? 'input-error' : ''}`}
-                                    type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}
+                                    type={
+                                      field.type === 'number'
+                                        ? 'number'
+                                        : field.type === 'date'
+                                          ? 'date'
+                                          : field.type === 'tel'
+                                            ? 'tel'
+                                            : 'text'
+                                    }
+                                    placeholder={field.type === 'tel' ? '+48 601 234 567' : undefined}
                                     value={String(answers[field.key] ?? '')}
-                                    onChange={(e) => setAnswers({ ...answers, [field.key]: e.target.value })}
+                                    onChange={(e) =>
+                                      setAnswers({
+                                        ...answers,
+                                        [field.key]:
+                                          field.type === 'tel' ? formatPlPhoneInput(e.target.value) : e.target.value,
+                                      })
+                                    }
                                   />
                                 )}
                               </>
@@ -674,7 +706,7 @@ export default function PublicForm() {
                           className={`input pl-10 ${buyerErrors.phone ? 'input-error' : ''}`}
                           placeholder="+48 601 234 567"
                           value={buyer.phone}
-                          onChange={(e) => setBuyer({ ...buyer, phone: e.target.value })}
+                          onChange={(e) => setBuyer({ ...buyer, phone: formatPlPhoneInput(e.target.value) })}
                         />
                       </div>
                       {buyerErrors.phone && <p className="mt-1 text-xs text-red-600">{buyerErrors.phone}</p>}
