@@ -66,6 +66,7 @@ interface SubmissionDetail {
   id: string;
   buyerEmail: string;
   buyerPhone: string | null;
+  buyerAddress: string | null;
   ticketNameSnapshot: string;
   ticketPriceCents: number;
   discountCodeSnapshot: string | null;
@@ -120,7 +121,7 @@ export default function AdminSubmissions() {
   const requestSeq = useRef(0);
 
   const [detail, setDetail] = useState<SubmissionDetail | null>(null);
-  const [editBuyer, setEditBuyer] = useState({ email: '', phone: '' });
+  const [editBuyer, setEditBuyer] = useState({ email: '', phone: '', address: '' });
   const [editAnswers, setEditAnswers] = useState<Answers>({});
   const [saving, setSaving] = useState(false);
   const [ticketBusy, setTicketBusy] = useState(false);
@@ -167,7 +168,7 @@ export default function AdminSubmissions() {
 
   const hydrateEditor = useCallback((submission: SubmissionDetail) => {
     setDetail(submission);
-    setEditBuyer({ email: submission.buyerEmail, phone: submission.buyerPhone ?? '' });
+    setEditBuyer({ email: submission.buyerEmail, phone: submission.buyerPhone ?? '', address: submission.buyerAddress ?? '' });
     setEditAnswers(submission.payloadJson ?? {});
   }, []);
 
@@ -195,6 +196,7 @@ export default function AdminSubmissions() {
     return (
       editBuyer.email !== detail.buyerEmail ||
       (editBuyer.phone || null) !== (detail.buyerPhone || null) ||
+      (editBuyer.address || null) !== (detail.buyerAddress || null) ||
       JSON.stringify(editAnswers) !== JSON.stringify(detail.payloadJson ?? {})
     );
   }, [detail, editBuyer, editAnswers]);
@@ -225,7 +227,12 @@ export default function AdminSubmissions() {
     try {
       const data = await api.patch<{ submission: SubmissionDetail }>(
         `/api/forms/${id}/submissions/${detail.id}`,
-        { buyerEmail: editBuyer.email, buyerPhone: editBuyer.phone || null, answers: editAnswers },
+        {
+          buyerEmail: editBuyer.email,
+          buyerPhone: editBuyer.phone || null,
+          buyerAddress: editBuyer.address || null,
+          answers: editAnswers,
+        },
       );
       // PATCH nie zwraca historii płatności — zachowujemy ją z poprzednio pobranych szczegółów.
       hydrateEditor({ ...data.submission, payments: detail.payments });
@@ -534,8 +541,8 @@ export default function AdminSubmissions() {
 
 interface DetailBodyProps {
   detail: SubmissionDetail;
-  editBuyer: { email: string; phone: string };
-  setEditBuyer: (value: { email: string; phone: string }) => void;
+  editBuyer: { email: string; phone: string; address: string };
+  setEditBuyer: (value: { email: string; phone: string; address: string }) => void;
   editAnswers: Answers;
   setEditAnswers: (value: Answers) => void;
   onCopyEmail: (email: string) => void;
@@ -703,6 +710,18 @@ function SubmissionDetailBody({
               value={editBuyer.phone}
               placeholder="—"
               onChange={(e) => setEditBuyer({ ...editBuyer, phone: e.target.value })}
+            />
+          </div>
+          <div className="sm:col-span-2">
+            <label className="label" htmlFor="buyer-address">
+              Adres
+            </label>
+            <input
+              id="buyer-address"
+              className="input"
+              value={editBuyer.address}
+              placeholder="—"
+              onChange={(e) => setEditBuyer({ ...editBuyer, address: e.target.value })}
             />
           </div>
         </div>

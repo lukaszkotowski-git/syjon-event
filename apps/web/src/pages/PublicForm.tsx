@@ -9,6 +9,7 @@ import {
   ListChecks,
   Lock,
   Mail,
+  MapPin,
   Pencil,
   Phone,
   ShieldCheck,
@@ -39,16 +40,6 @@ function answerDisplayValue(field: FieldDefinition, value: string | boolean | un
   if (field.type === 'checkbox') return value ? 'Tak' : 'Nie';
   const text = String(value ?? '').trim();
   return text || '—';
-}
-
-function closingDateBadge(iso: string) {
-  const date = new Date(iso);
-  const strip = (s: string) => s.replace('.', '').toUpperCase();
-  return {
-    day: new Intl.DateTimeFormat('pl-PL', { day: '2-digit' }).format(date),
-    month: strip(new Intl.DateTimeFormat('pl-PL', { month: 'short' }).format(date)),
-    full: new Intl.DateTimeFormat('pl-PL', { dateStyle: 'long', timeStyle: 'short' }).format(date),
-  };
 }
 
 /** Przewija do pierwszego pola z błędem — po walidacji uczestnik od razu widzi, co poprawić. */
@@ -84,7 +75,7 @@ export default function PublicForm() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [stepIndex, setStepIndex] = useState(0);
   const [ticketTypeId, setTicketTypeId] = useState('');
-  const [buyer, setBuyer] = useState({ email: '', phone: '' });
+  const [buyer, setBuyer] = useState({ email: '', phone: '', address: '' });
   const [answers, setAnswers] = useState<Answers>({});
   const [legal, setLegal] = useState({ terms: false, privacy: false });
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -238,6 +229,19 @@ export default function PublicForm() {
         return;
       }
       setFieldErrors({});
+
+      // E-mail i telefon uczestnik często już podał wyżej w formularzu — nie każmy wpisywać ich drugi raz.
+      const emailField = fields.find((f) => f.type === 'email');
+      const phoneField = fields.find((f) => f.type === 'tel');
+      const answeredEmail = emailField ? String(result.data[emailField.key] ?? '').trim() : '';
+      const answeredPhone = phoneField ? String(result.data[phoneField.key] ?? '').trim() : '';
+      if (answeredEmail || answeredPhone) {
+        setBuyer((prev) => ({
+          ...prev,
+          email: prev.email || answeredEmail,
+          phone: prev.phone || answeredPhone,
+        }));
+      }
     } else if (currentStepKey === 'ticket') {
       if (!validateBuyerAndTicket()) {
         focusFirstError();
@@ -286,7 +290,7 @@ export default function PublicForm() {
     try {
       const response = await api.post<CreateSubmissionResponse>(`/api/public/f/${form.slug}/submissions`, {
         ticketTypeId,
-        buyer: { email: buyer.email, phone: buyer.phone || null },
+        buyer: { email: buyer.email, phone: buyer.phone || null, address: buyer.address || null },
         answers: fieldsResult.data,
         discountCode: appliedDiscount?.code,
         acceptTerms: legal.terms,
@@ -320,7 +324,6 @@ export default function PublicForm() {
 
   const allSoldOut = form.soldOut || form.ticketTypes.every((t) => t.soldOut);
   const hasHeroImage = Boolean(form.backgroundImageDesktopUrl || form.backgroundImageMobileUrl);
-  const closing = closingDateBadge(form.closesAt);
 
   const editButton = (label: string, step: string) => (
     <IconButton icon={Pencil} label={label} size="sm" onClick={() => goToStep(step)} />
@@ -329,27 +332,25 @@ export default function PublicForm() {
   return (
     <main className="mx-auto max-w-2xl px-4 py-6 sm:px-6 sm:py-10 lg:max-w-4xl">
       <div className="overflow-hidden rounded-3xl border border-slate-200/70 bg-white shadow-card">
-        {/* Zdjęcie wydarzenia (lub gradient marki). */}
-        <div className="relative min-h-[260px] overflow-hidden sm:min-h-[340px]">
+        {/* Zdjęcie wydarzenia (lub gradient marki). Ze zdjęciem — pełny podgląd, bez kadrowania: wysokość dopasowuje się do proporcji obrazu. */}
+        <div className="relative overflow-hidden">
           {hasHeroImage ? (
             <>
               {form.backgroundImageMobileUrl && (
-                <div
-                  className="absolute inset-0 bg-cover bg-center bg-no-repeat bg800:hidden"
-                  style={{ backgroundImage: `url(${form.backgroundImageMobileUrl})` }}
+                <img
+                  src={form.backgroundImageMobileUrl}
+                  alt=""
+                  className="block w-full bg800:hidden"
                 />
               )}
-              <div
-                className={`absolute inset-0 bg-cover bg-center bg-no-repeat ${
-                  form.backgroundImageMobileUrl ? 'hidden bg800:block' : ''
-                }`}
-                style={{
-                  backgroundImage: `url(${form.backgroundImageDesktopUrl ?? form.backgroundImageMobileUrl})`,
-                }}
+              <img
+                src={form.backgroundImageDesktopUrl ?? form.backgroundImageMobileUrl ?? undefined}
+                alt=""
+                className={`block w-full ${form.backgroundImageMobileUrl ? 'hidden bg800:block' : ''}`}
               />
             </>
           ) : (
-            <div className="absolute inset-0 bg-brand-gradient" />
+            <div className="min-h-[260px] bg-brand-gradient sm:min-h-[340px]" />
           )}
           <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/10 to-transparent" />
 
@@ -436,17 +437,7 @@ export default function PublicForm() {
           </button>
         ) : (
           <div className="border-t border-slate-200 p-5 sm:p-8">
-            <div className="flex items-start justify-between gap-4">
-              <h2 className="font-display text-xl font-bold leading-snug text-slate-900">{form.title}</h2>
-              <div
-                className="shrink-0 rounded-2xl bg-brand-900 px-3.5 py-2.5 text-center text-white"
-                title={`Zapisy trwają do ${closing.full}`}
-              >
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-brand-200">Zapisy do</p>
-                <p className="text-xl font-bold leading-none">{closing.day}</p>
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-brand-200">{closing.month}</p>
-              </div>
-            </div>
+            <h2 className="font-display text-xl font-bold leading-snug text-slate-900">{form.title}</h2>
 
             <div className="mt-6">
               <Stepper steps={steps} currentIndex={stepIndex} />
@@ -692,6 +683,26 @@ export default function PublicForm() {
                       </div>
                       {buyerErrors.phone && <p className="mt-1 text-xs text-red-600">{buyerErrors.phone}</p>}
                     </div>
+                    <div>
+                      <label className="label" htmlFor="buyer-address">
+                        Adres (opcjonalnie)
+                      </label>
+                      <div className="relative">
+                        <MapPin
+                          className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                          aria-hidden
+                        />
+                        <input
+                          id="buyer-address"
+                          type="text"
+                          autoComplete="street-address"
+                          className="input pl-10"
+                          placeholder="Ul. Przykładowa 1, 00-001 Warszawa"
+                          value={buyer.address}
+                          onChange={(e) => setBuyer({ ...buyer, address: e.target.value })}
+                        />
+                      </div>
+                    </div>
                   </div>
                 </section>
               )}
@@ -754,6 +765,15 @@ export default function PublicForm() {
                             Telefon
                           </dt>
                           <dd className="font-medium text-slate-800">{buyer.phone}</dd>
+                        </div>
+                      )}
+                      {buyer.address && (
+                        <div className="flex items-center justify-between gap-4">
+                          <dt className="inline-flex items-center gap-1.5 text-slate-500">
+                            <MapPin className="h-3.5 w-3.5" aria-hidden />
+                            Adres
+                          </dt>
+                          <dd className="text-right font-medium text-slate-800">{buyer.address}</dd>
                         </div>
                       )}
                     </dl>

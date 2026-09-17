@@ -67,3 +67,42 @@
 .animate-float-slower {
   animation: float-slower 18s ease-in-out infinite;
 }
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.animate-pop-in {
+  animation: pop-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-float-slow,
+  .animate-float-slower,
+  .animate-fade-in-up,
+  .animate-pop-in {
+    animation: none;
+  }
+}

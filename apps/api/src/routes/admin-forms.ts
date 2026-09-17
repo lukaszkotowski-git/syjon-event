@@ -561,6 +561,7 @@ adminFormsRouter.get(
       'status',
       'e-mail',
       'telefon',
+      'adres',
       'bilet',
       'cena_pln',
       'waluta',
@@ -580,6 +581,7 @@ adminFormsRouter.get(
         submission.status,
         submission.buyerEmail,
         submission.buyerPhone ?? '',
+        submission.buyerAddress ?? '',
         submission.ticketNameSnapshot,
         (submission.ticketPriceCents / 100).toFixed(2).replace('.', ','),
         submission.currency,
@@ -623,6 +625,7 @@ adminFormsRouter.patch(
       data: {
         ...(body.buyerEmail !== undefined ? { buyerEmail: body.buyerEmail } : {}),
         ...(body.buyerPhone !== undefined ? { buyerPhone: body.buyerPhone } : {}),
+        ...(body.buyerAddress !== undefined ? { buyerAddress: body.buyerAddress } : {}),
         // Odpowiedzi walidujemy tym samym schematem co przy rejestracji — ten sam
         // snapshot pól, który obowiązywał w momencie zgłoszenia.
         ...(body.answers !== undefined

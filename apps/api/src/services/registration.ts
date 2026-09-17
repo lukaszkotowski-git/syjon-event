@@ -106,6 +106,7 @@ export async function createRegistration(
         discountAmountCents,
         buyerEmail: body.buyer.email,
         buyerPhone: body.buyer.phone ?? null,
+        buyerAddress: body.buyer.address ?? null,
         payloadJson: answers as object,
         schemaSnapshotJson: schema as object,
         termsVersionAccepted: form.termsVersion,

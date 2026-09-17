@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowRight, CalendarDays, TicketX } from 'lucide-react';
+import { ArrowRight, CalendarDays, ChevronDown, LogIn, TicketX } from 'lucide-react';
 import type { PublicEventListItemDto } from '@syjonevent/shared';
 import { api, ApiError } from '../lib/api';
 import { PRIVACY_POLICY_URL, TERMS_URL } from '../lib/legal';
@@ -44,14 +44,29 @@ const SOCIAL_LINKS = [
   },
 ];
 
+const PAST_EVENTS = [
+  {
+    title: 'Sylwester z Syjonem',
+    description: 'Wspólne przywitanie Nowego Roku pełne uwielbienia, świadectw i radości — zobacz, jak było!',
+    video: '/sylwester.mp4',
+  },
+  {
+    title: 'Syjon Camp',
+    description:
+      'Syjon Camp to wakacyjny wyjazd rekolekcyjno-wypoczynkowy, w którym tworzymy przestrzeń na wzrost duchowy, budowanie relacji a także reset duszy i ciała!',
+    video: '/mikorzyn.mp4',
+  },
+];
+
 const eventDateFormat = new Intl.DateTimeFormat('pl-PL', { day: 'numeric', month: 'long', year: 'numeric' });
 const closesFormat = new Intl.DateTimeFormat('pl-PL', { day: 'numeric', month: 'short' });
 
-function EventCard({ event }: { event: PublicEventListItemDto }) {
+function EventCard({ event, delay = 0 }: { event: PublicEventListItemDto; delay?: number }) {
   return (
     <Link
       to={`/f/${event.slug}`}
-      className="group relative flex aspect-[4/5] flex-col justify-end overflow-hidden rounded-3xl bg-brand-gradient shadow-card transition duration-300 hover:-translate-y-1 hover:shadow-soft"
+      style={{ animationDelay: `${delay}ms` }}
+      className="animate-pop-in group relative flex aspect-[4/5] flex-col justify-end overflow-hidden rounded-3xl bg-brand-gradient shadow-card transition duration-300 hover:-translate-y-1.5 hover:scale-[1.02] hover:shadow-soft"
     >
       {event.imageUrl && (
         <img
@@ -110,7 +125,7 @@ function LoginPanel({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="absolute right-0 top-full z-30 mt-3 w-72 rounded-2xl border border-slate-200 bg-white p-4 shadow-card">
+    <div className="animate-pop-in absolute right-0 top-full z-30 mt-3 w-72 rounded-2xl border border-slate-200 bg-white p-4 shadow-card">
       <div className="mb-3 flex items-center justify-between">
         <p className="text-sm font-semibold text-slate-800">Logowanie do panelu</p>
         <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600" aria-label="Zamknij">
@@ -167,15 +182,42 @@ export default function Home() {
             <img src="/logo.png" alt="Syjon Event" className="h-9 w-9" />
             <span className="font-display text-lg font-semibold text-brand-900">Syjon Event</span>
           </div>
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setLoginOpen((v) => !v)}
-              className="btn-ghost text-sm text-brand-800 hover:bg-brand-50"
-            >
-              Panel organizatora
-            </button>
-            {loginOpen && <LoginPanel onClose={() => setLoginOpen(false)} />}
+          <div className="flex items-center gap-4">
+            <div className="hidden items-center gap-3.5 sm:flex">
+              {SOCIAL_LINKS.map((social) => (
+                <a
+                  key={social.label}
+                  href={social.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={social.label}
+                  className="inline-flex text-slate-400 transition hover:-translate-y-0.5 hover:scale-110 hover:text-brand-700"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={1.8}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="h-[18px] w-[18px]"
+                  >
+                    {social.icon}
+                  </svg>
+                </a>
+              ))}
+            </div>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setLoginOpen((v) => !v)}
+                className="btn-ghost text-sm text-brand-800 hover:bg-brand-50"
+              >
+                <LogIn className="h-4 w-4" aria-hidden />
+                Login
+              </button>
+              {loginOpen && <LoginPanel onClose={() => setLoginOpen(false)} />}
+            </div>
           </div>
         </div>
       </header>
@@ -191,24 +233,44 @@ export default function Home() {
           className="animate-float-slower absolute -bottom-32 -right-16 h-96 w-96 rounded-full bg-brand-400/20 blur-3xl"
         />
         <div className="relative mx-auto max-w-6xl px-6 py-24 text-center sm:py-32">
-          <span className="badge border border-white/25 bg-white/10 px-3.5 py-1.5 text-brand-50">
-            Rejestracja na wydarzenia bez chaosu
+          <span
+            className="animate-fade-in-up badge border border-white/25 bg-white/10 px-3.5 py-1.5 text-brand-50"
+          >
+            Zapisy Online
           </span>
-          <h1 className="mx-auto mt-6 max-w-3xl text-4xl font-bold leading-tight text-white sm:text-5xl">
-            Zorganizuj wydarzenie i zbieraj zgłoszenia w jednym miejscu
+          <h1
+            style={{ animationDelay: '90ms' }}
+            className="animate-fade-in-up mx-auto mt-6 max-w-3xl text-4xl font-bold leading-tight text-white sm:text-5xl"
+          >
+            Wydarzenia Wspólnoty Syjon
           </h1>
-          <p className="mx-auto mt-5 max-w-xl text-base text-brand-100 sm:text-lg">
-            Formularze, bilety, płatności i lista uczestników — od sylwestra po wyjazd na narty.
+          <p
+            style={{ animationDelay: '180ms' }}
+            className="animate-fade-in-up mx-auto mt-5 max-w-xl text-base text-brand-100 sm:text-lg"
+          >
+            Wybierz wydarzenie, zapisz się w kilka chwil i miej bilet zawsze pod ręką.
           </p>
-          <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
+          <div
+            style={{ animationDelay: '270ms' }}
+            className="animate-fade-in-up mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row"
+          >
             <button
               type="button"
               onClick={() => eventsRef.current?.scrollIntoView({ behavior: 'smooth' })}
-              className="btn-primary bg-white text-brand-800 shadow-soft hover:bg-brand-50 active:bg-brand-100"
+              className="btn-primary bg-white text-brand-800 shadow-soft transition-transform hover:-translate-y-0.5 hover:bg-brand-50 hover:shadow-lg active:translate-y-0 active:bg-brand-100"
             >
               Zobacz wydarzenia
             </button>
           </div>
+          <button
+            type="button"
+            onClick={() => eventsRef.current?.scrollIntoView({ behavior: 'smooth' })}
+            aria-label="Przewiń do listy wydarzeń"
+            style={{ animationDelay: '450ms' }}
+            className="animate-fade-in-up mx-auto mt-14 block text-brand-100/70 transition hover:text-white"
+          >
+            <ChevronDown className="h-6 w-6 animate-bounce" aria-hidden />
+          </button>
         </div>
       </section>
 
@@ -237,11 +299,40 @@ export default function Home() {
           </div>
         ) : (
           <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-            {events.map((event) => (
-              <EventCard key={event.slug} event={event} />
+            {events.map((event, i) => (
+              <EventCard key={event.slug} event={event} delay={i * 80} />
             ))}
           </div>
         )}
+      </section>
+
+      {/* Zakończone wydarzenia */}
+      <section className="bg-slate-50">
+        <div className="mx-auto max-w-6xl px-6 py-20 sm:py-24">
+          <div className="mx-auto max-w-2xl text-center">
+            <h2 className="text-3xl font-bold text-slate-900">Zakończone wydarzenia</h2>
+            <p className="mt-3 text-slate-500">Zobacz, jak wyglądały nasze poprzednie spotkania.</p>
+          </div>
+          <div className="mt-12 grid gap-8 sm:grid-cols-2">
+            {PAST_EVENTS.map((item) => (
+              <div key={item.title} className="overflow-hidden rounded-3xl bg-white shadow-card">
+                <video
+                  src={item.video}
+                  autoPlay
+                  muted
+                  loop
+                  playsInline
+                  controls
+                  className="aspect-video w-full bg-slate-900 object-cover"
+                />
+                <div className="p-5">
+                  <h3 className="font-display text-lg font-semibold text-slate-900">{item.title}</h3>
+                  <p className="mt-1.5 text-sm text-slate-500">{item.description}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       </section>
 
       {/* Footer */}
@@ -272,30 +363,6 @@ export default function Home() {
               Regulamin serwisu internetowego
             </a>
           </nav>
-          <div className="flex items-center gap-4">
-            {SOCIAL_LINKS.map((social) => (
-              <a
-                key={social.label}
-                href={social.href}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label={social.label}
-                className="text-slate-400 transition hover:text-brand-700"
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={1.8}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="h-5 w-5"
-                >
-                  {social.icon}
-                </svg>
-              </a>
-            ))}
-          </div>
         </div>
       </footer>
     </main>

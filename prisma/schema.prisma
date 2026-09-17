@@ -160,6 +160,7 @@ model Submission {
   discountAmountCents          Int              @default(0) @map("discount_amount_cents")
   buyerEmail                   String           @map("buyer_email")
   buyerPhone                   String?          @map("buyer_phone")
+  buyerAddress                 String?          @map("buyer_address")
   payloadJson                  Json             @map("payload_json")
   schemaSnapshotJson           Json             @map("schema_snapshot_json")
   termsVersionAccepted         String           @map("terms_version_accepted")

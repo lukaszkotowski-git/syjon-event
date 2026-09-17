@@ -125,6 +125,12 @@ export const buyerSchema = z.object({
       return normalized;
     })
     .nullish(),
+  address: z
+    .string()
+    .trim()
+    .max(200)
+    .transform((v) => v || null)
+    .nullish(),
 });
 
 export const createSubmissionRequest = z.object({
@@ -143,6 +149,7 @@ export type CreateSubmissionRequest = z.infer<typeof createSubmissionRequest>;
 export const updateSubmissionRequest = z.object({
   buyerEmail: buyerSchema.shape.email.optional(),
   buyerPhone: buyerSchema.shape.phone.optional(),
+  buyerAddress: buyerSchema.shape.address.optional(),
   answers: z.record(z.unknown()).optional(),
 });
 export type UpdateSubmissionRequest = z.infer<typeof updateSubmissionRequest>;

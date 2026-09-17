@@ -4,6 +4,7 @@ import {
   Archive,
   ArrowLeft,
   Braces,
+  ChevronDown,
   CircleCheck,
   CircleX,
   Code,
@@ -118,14 +119,16 @@ interface EditorState {
 
 const NAV_SECTIONS: NavSection[] = [
   { id: 'podstawowe', label: 'Podstawowe', icon: Info },
+  { id: 'pola', label: 'Pola formularza', icon: ListChecks },
   { id: 'bilety', label: 'Bilety', icon: Ticket },
   { id: 'rabaty', label: 'Kody rabatowe', icon: TicketPercent },
-  { id: 'pola', label: 'Pola formularza', icon: ListChecks },
   { id: 'wyglad', label: 'Wygląd', icon: Image },
-  { id: 'po-platnosci', label: 'Po płatności', icon: CreditCard },
   { id: 'email', label: 'E-mail', icon: Mail },
   { id: 'zaawansowane', label: 'Zaawansowane', icon: Code },
 ];
+
+// Nadal działają, jeśli organizator wpisze je ręcznie — tylko nie proponujemy ich jako domyślne przyciski.
+const HIDDEN_BUILTIN_VARIABLES = new Set(['email', 'telefon', 'kwota']);
 
 const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 
@@ -134,6 +137,22 @@ const toLocalInput = (iso: string) => {
   const offset = date.getTimezoneOffset() * 60_000;
   return new Date(date.getTime() - offset).toISOString().slice(0, 16);
 };
+
+function defaultSections(): FormSection[] {
+  return [
+    {
+      id: crypto.randomUUID(),
+      name: 'Dane osobowe',
+      fields: [
+        { key: 'imie', label: 'Imię', type: 'text', required: true },
+        { key: 'nazwisko', label: 'Nazwisko', type: 'text', required: true },
+        { key: 'data_urodzenia', label: 'Data urodzenia', type: 'date', required: true },
+        { key: 'email', label: 'Adres e-mail', type: 'email', required: true },
+        { key: 'telefon', label: 'Numer telefonu', type: 'tel', required: true },
+      ],
+    },
+  ];
+}
 
 function emptyState(): EditorState {
   return {
@@ -154,7 +173,7 @@ function emptyState(): EditorState {
       confirmationEmailTitle: '',
       confirmationEmailBody: '',
     },
-    sections: [],
+    sections: defaultSections(),
     customScript: '',
     tickets: [],
     discountCodes: [],
@@ -245,25 +264,53 @@ function EditorCard({
   title,
   description,
   children,
+  collapsible = false,
+  defaultOpen = true,
 }: {
   id: string;
   icon: LucideIcon;
   title: string;
   description?: ReactNode;
   children: ReactNode;
+  collapsible?: boolean;
+  defaultOpen?: boolean;
 }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const isOpen = !collapsible || open;
+
+  const header = (
+    <>
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-700">
+        <Icon className="h-5 w-5" aria-hidden />
+      </span>
+      <div className="min-w-0 flex-1">
+        <h2 className="text-lg font-medium leading-tight">{title}</h2>
+        {description && <p className="mt-0.5 text-sm text-slate-500">{description}</p>}
+      </div>
+      {collapsible && (
+        <ChevronDown
+          className={`mt-1.5 h-4 w-4 shrink-0 text-slate-400 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}
+          aria-hidden
+        />
+      )}
+    </>
+  );
+
   return (
     <section id={id} className="card scroll-mt-16 space-y-5 lg:scroll-mt-6">
-      <header className="flex items-start gap-3">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-700">
-          <Icon className="h-5 w-5" aria-hidden />
-        </span>
-        <div className="min-w-0">
-          <h2 className="text-lg font-medium leading-tight">{title}</h2>
-          {description && <p className="mt-0.5 text-sm text-slate-500">{description}</p>}
-        </div>
-      </header>
-      {children}
+      {collapsible ? (
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={isOpen}
+          className="flex w-full items-start gap-3 text-left"
+        >
+          {header}
+        </button>
+      ) : (
+        <header className="flex items-start gap-3">{header}</header>
+      )}
+      {isOpen && children}
     </section>
   );
 }
@@ -916,6 +963,15 @@ export default function AdminFormEditor() {
           </EditorCard>
 
           <EditorCard
+            id="pola"
+            icon={ListChecks}
+            title="Pola formularza"
+            description="Dodatkowe pytania do uczestników, pogrupowane w sekcje."
+          >
+            <SectionBuilder sections={sections} onChange={setSections} />
+          </EditorCard>
+
+          <EditorCard
             id="bilety"
             icon={Ticket}
             title="Bilety"
@@ -940,15 +996,6 @@ export default function AdminFormEditor() {
           </EditorCard>
 
           <EditorCard
-            id="pola"
-            icon={ListChecks}
-            title="Pola formularza"
-            description="Dodatkowe pytania do uczestników, pogrupowane w sekcje."
-          >
-            <SectionBuilder sections={sections} onChange={setSections} />
-          </EditorCard>
-
-          <EditorCard
             id="wyglad"
             icon={Image}
             title="Wygląd"
@@ -965,83 +1012,12 @@ export default function AdminFormEditor() {
           </EditorCard>
 
           <EditorCard
-            id="po-platnosci"
-            icon={CreditCard}
-            title="Strona po płatności"
-            description="Co zobaczy uczestnik po powrocie z Paynow. Puste pole = tekst domyślny."
-          >
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50/40 p-4">
-                <p className="flex items-center gap-2 text-sm font-medium text-emerald-800">
-                  <CircleCheck className="h-4 w-4" aria-hidden />
-                  Płatność się powiodła
-                </p>
-                <div>
-                  <label className="label" htmlFor="success-title">
-                    Tytuł
-                  </label>
-                  <input
-                    id="success-title"
-                    className="input"
-                    placeholder="Rejestracja potwierdzona"
-                    value={draft.paymentSuccessTitle}
-                    onChange={(e) => setField('paymentSuccessTitle', e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label className="label" htmlFor="success-body">
-                    Treść
-                  </label>
-                  <textarea
-                    id="success-body"
-                    className="input h-24"
-                    placeholder="Np. Bilet wyślemy mailem. Do zobaczenia!"
-                    value={draft.paymentSuccessBody}
-                    onChange={(e) => setField('paymentSuccessBody', e.target.value)}
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-3 rounded-xl border border-red-200 bg-red-50/40 p-4">
-                <p className="flex items-center gap-2 text-sm font-medium text-red-800">
-                  <CircleX className="h-4 w-4" aria-hidden />
-                  Płatność nieudana lub przerwana
-                </p>
-                <div>
-                  <label className="label" htmlFor="error-title">
-                    Tytuł
-                  </label>
-                  <input
-                    id="error-title"
-                    className="input"
-                    placeholder="Płatność nie została zakończona"
-                    value={draft.paymentErrorTitle}
-                    onChange={(e) => setField('paymentErrorTitle', e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label className="label" htmlFor="error-body">
-                    Treść
-                  </label>
-                  <textarea
-                    id="error-body"
-                    className="input h-24"
-                    placeholder="Np. Spróbuj ponownie albo napisz do nas na kontakt@…"
-                    value={draft.paymentErrorBody}
-                    onChange={(e) => setField('paymentErrorBody', e.target.value)}
-                  />
-                </div>
-              </div>
-            </div>
-          </EditorCard>
-
-          <EditorCard
             id="email"
             icon={Mail}
             title="E-mail z potwierdzeniem"
             description="Wysyłany po rejestracji na bilet bezpłatny lub po opłaceniu biletu. Dane biletu, kod QR i przycisk dodają się automatycznie. Puste pole = tekst domyślny."
           >
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-4">
               <div>
                 <label className="label" htmlFor="email-title">
                   Tytuł
@@ -1056,7 +1032,7 @@ export default function AdminFormEditor() {
                   onChange={(e) => setField('confirmationEmailTitle', e.target.value)}
                 />
               </div>
-              <div className="md:row-span-2">
+              <div>
                 <label className="label" htmlFor="email-body">
                   Treść
                 </label>
@@ -1081,9 +1057,11 @@ export default function AdminFormEditor() {
               <div>
                 <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-slate-400">Dane zgłoszenia</p>
                 <div className="flex flex-wrap gap-1.5">
-                  {EMAIL_BUILTIN_VARIABLES.map((variable) => (
-                    <VariableChip key={variable.name} name={variable.name} label={variable.label} onInsert={insertEmailVariable} />
-                  ))}
+                  {EMAIL_BUILTIN_VARIABLES.filter((variable) => !HIDDEN_BUILTIN_VARIABLES.has(variable.name)).map(
+                    (variable) => (
+                      <VariableChip key={variable.name} name={variable.name} label={variable.label} onInsert={insertEmailVariable} />
+                    ),
+                  )}
                 </div>
               </div>
               {fieldVariables.length > 0 && (
@@ -1119,32 +1097,81 @@ export default function AdminFormEditor() {
             id="zaawansowane"
             icon={Code}
             title="Zaawansowane"
-            description="Wersje dokumentów prawnych i własny kod JS formularza."
+            description="Strona po płatności i własny kod JS formularza."
+            collapsible
+            defaultOpen={false}
           >
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <label className="label" htmlFor="terms-version">
-                  Wersja regulaminu
-                </label>
-                <input
-                  id="terms-version"
-                  className="input"
-                  value={draft.termsVersion}
-                  onChange={(e) => setField('termsVersion', e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="label" htmlFor="privacy-version">
-                  Wersja polityki prywatności
-                </label>
-                <input
-                  id="privacy-version"
-                  className="input"
-                  value={draft.privacyPolicyVersion}
-                  onChange={(e) => setField('privacyPolicyVersion', e.target.value)}
-                />
+            <div className="space-y-2">
+              <p className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                <CreditCard className="h-4 w-4" aria-hidden />
+                Strona po płatności
+              </p>
+              <p className="text-xs text-slate-500">Co zobaczy uczestnik po powrocie z Paynow. Puste pole = tekst domyślny.</p>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50/40 p-4">
+                  <p className="flex items-center gap-2 text-sm font-medium text-emerald-800">
+                    <CircleCheck className="h-4 w-4" aria-hidden />
+                    Płatność się powiodła
+                  </p>
+                  <div>
+                    <label className="label" htmlFor="success-title">
+                      Tytuł
+                    </label>
+                    <input
+                      id="success-title"
+                      className="input"
+                      placeholder="Rejestracja potwierdzona"
+                      value={draft.paymentSuccessTitle}
+                      onChange={(e) => setField('paymentSuccessTitle', e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="label" htmlFor="success-body">
+                      Treść
+                    </label>
+                    <textarea
+                      id="success-body"
+                      className="input h-24"
+                      placeholder="Np. Bilet wyślemy mailem. Do zobaczenia!"
+                      value={draft.paymentSuccessBody}
+                      onChange={(e) => setField('paymentSuccessBody', e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-3 rounded-xl border border-red-200 bg-red-50/40 p-4">
+                  <p className="flex items-center gap-2 text-sm font-medium text-red-800">
+                    <CircleX className="h-4 w-4" aria-hidden />
+                    Płatność nieudana lub przerwana
+                  </p>
+                  <div>
+                    <label className="label" htmlFor="error-title">
+                      Tytuł
+                    </label>
+                    <input
+                      id="error-title"
+                      className="input"
+                      placeholder="Płatność nie została zakończona"
+                      value={draft.paymentErrorTitle}
+                      onChange={(e) => setField('paymentErrorTitle', e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="label" htmlFor="error-body">
+                      Treść
+                    </label>
+                    <textarea
+                      id="error-body"
+                      className="input h-24"
+                      placeholder="Np. Spróbuj ponownie albo napisz do nas na kontakt@…"
+                      value={draft.paymentErrorBody}
+                      onChange={(e) => setField('paymentErrorBody', e.target.value)}
+                    />
+                  </div>
+                </div>
               </div>
             </div>
+
             <div>
               <label className="label" htmlFor="custom-script">
                 Własny kod JS
