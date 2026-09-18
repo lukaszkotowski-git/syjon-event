@@ -13,6 +13,9 @@ export class AppError extends Error {
   }
 }
 
+/** Paynow nie odpowiedział (timeout, 5xx, 429) — nie wiemy, czy operacja się wykonała. */
+export class PaynowTransientError extends Error {}
+
 export const badRequest = (message: string, details?: unknown) =>
   new AppError(400, 'BAD_REQUEST', message, details);
 export const unauthorized = (message = 'Wymagane logowanie') =>
@@ -35,6 +38,13 @@ export function errorHandler(error: unknown, req: Request, res: Response, _next:
     res
       .status(error.statusCode)
       .json({ error: { code: error.code, message: error.message, details: error.details } });
+    return;
+  }
+  if (error instanceof PaynowTransientError) {
+    console.warn(`[api] ${req.method} ${req.path} — ${error.message}`);
+    res.status(503).json({
+      error: { code: 'PAYMENT_PROVIDER_UNAVAILABLE', message: 'Operator płatności chwilowo nie odpowiada. Spróbuj za chwilę.' },
+    });
     return;
   }
   if (error instanceof MulterError) {

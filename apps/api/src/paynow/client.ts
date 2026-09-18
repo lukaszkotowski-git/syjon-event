@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { env } from '../env.js';
-import { badGateway } from '../http/errors.js';
+import { badGateway, PaynowTransientError } from '../http/errors.js';
 import { computeRequestSignature, verifySignature } from './signature.js';
 import { isPaynowStatus, type PaynowStatus } from './status.js';
 
@@ -22,7 +22,7 @@ export interface CreatePaymentResult {
   redirectUrl: string;
 }
 
-export class PaynowTransientError extends Error {}
+export { PaynowTransientError };
 
 const REQUEST_TIMEOUT_MS = 15_000;
 

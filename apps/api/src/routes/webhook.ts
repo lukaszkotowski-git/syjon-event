@@ -41,6 +41,7 @@ webhookRouter.post(
     const modifiedAt = parsed.data.modifiedAt ? new Date(parsed.data.modifiedAt) : null;
     const result = await applyProviderStatus({
       providerPaymentId: parsed.data.paymentId,
+      externalId: parsed.data.externalId,
       incomingStatus: parsed.data.status,
       incomingModifiedAt: modifiedAt && !Number.isNaN(modifiedAt.getTime()) ? modifiedAt : null,
       rawPayload: parsed.data,

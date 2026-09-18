@@ -1,9 +1,9 @@
 import type { Payment, PaymentStatus, Submission } from '@prisma/client';
 import { env } from '../env.js';
 import { buildPaidConfirmationEmail, sendMail } from './mailer.js';
-import { createPayment, PaynowTransientError } from '../paynow/client.js';
+import { createPayment, getPaymentStatus, PaynowTransientError } from '../paynow/client.js';
 import { decideStatusUpdate } from '../paynow/status.js';
-import { prisma } from '../prisma.js';
+import { prisma, type Tx } from '../prisma.js';
 import { generateIdempotencyKey } from '../utils/tokens.js';
 import { renderCustomEmailContent } from './email-variables.js';
 import { ensureTicketNonce, newTicketFields, ticketEmailAttachment } from './tickets.js';
@@ -13,8 +13,17 @@ export function confirmationUrl(submissionId: string, publicToken: string): stri
   return `${base}/potwierdzenie/${submissionId}?token=${encodeURIComponent(publicToken)}`;
 }
 
+/** Blokada per zgłoszenie — serializuje równoległe próby rozpoczęcia płatności. */
+async function lockSubmission(tx: Tx, submissionId: string): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`payment:${submissionId}`}))`;
+}
+
 /**
- * Tworzy (lub odtwarza) próbę płatności i pobiera z Paynow redirectUrl.
+ * Tworzy, odtwarza albo wznawia próbę płatności i zwraca ją z redirectUrl z Paynow.
+ *
+ * Zgłoszenie ma najwyżej jedną otwartą próbę (NEW/PENDING). Jeśli już istnieje w Paynow,
+ * klient wraca na tę samą bramkę — nowa płatność obok niezakończonej pozwalałaby
+ * zapłacić dwa razy (np. z dwóch kart przeglądarki).
  *
  * Kolejność jest ważna: najpierw lokalny rekord z Idempotency-Key, potem wywołanie
  * Paynow. Jeśli Paynow nie odpowie (timeout/5xx), rekord zostaje i ponowienie
@@ -25,22 +34,27 @@ export async function startPaymentAttempt(
   publicToken: string,
   formTitle: string,
 ): Promise<Payment> {
-  const reusable = await prisma.payment.findFirst({
-    where: { submissionId: submission.id, status: 'NEW', providerPaymentId: null },
-    orderBy: { createdAt: 'desc' },
+  const payment = await prisma.$transaction(async (tx) => {
+    await lockSubmission(tx, submission.id);
+    const open = await tx.payment.findFirst({
+      where: { submissionId: submission.id, status: { in: ['NEW', 'PENDING'] } },
+      orderBy: { createdAt: 'desc' },
+    });
+    return (
+      open ??
+      tx.payment.create({
+        data: {
+          submissionId: submission.id,
+          idempotencyKey: generateIdempotencyKey(),
+          amountCents: submission.ticketPriceCents,
+          currency: submission.currency,
+          status: 'NEW',
+        },
+      })
+    );
   });
 
-  const payment =
-    reusable ??
-    (await prisma.payment.create({
-      data: {
-        submissionId: submission.id,
-        idempotencyKey: generateIdempotencyKey(),
-        amountCents: submission.ticketPriceCents,
-        currency: submission.currency,
-        status: 'NEW',
-      },
-    }));
+  if (payment.providerPaymentId && payment.redirectUrl) return payment;
 
   const validitySeconds = remainingReservationSeconds(submission);
 
@@ -56,14 +70,35 @@ export async function startPaymentAttempt(
     idempotencyKey: payment.idempotencyKey,
   });
 
+  // Statusu nie nadpisujemy: notyfikacja mogła już dotrzeć i podpiąć się po externalId.
   return prisma.payment.update({
     where: { id: payment.id },
-    data: {
-      providerPaymentId: result.paymentId,
-      redirectUrl: result.redirectUrl,
-      status: result.status as PaymentStatus,
-    },
+    data: { providerPaymentId: result.paymentId, redirectUrl: result.redirectUrl },
   });
+}
+
+/**
+ * Dociąga z Paynow statusy otwartych prób zgłoszenia — na wypadek, gdyby webhook
+ * jeszcze nie dotarł. Brak odpowiedzi Paynow nie jest błędem: zostaje stan lokalny.
+ */
+export async function syncOpenPayments(submissionId: string): Promise<void> {
+  const open = await prisma.payment.findMany({
+    where: { submissionId, status: { in: ['NEW', 'PENDING'] }, providerPaymentId: { not: null } },
+  });
+  for (const payment of open) {
+    try {
+      const remote = await getPaymentStatus(payment.providerPaymentId as string);
+      if (!remote) continue;
+      await applyProviderStatus({
+        providerPaymentId: payment.providerPaymentId as string,
+        incomingStatus: remote.status,
+        incomingModifiedAt: remote.modifiedAt,
+        rawPayload: remote.raw,
+      });
+    } catch (error) {
+      if (!(error instanceof PaynowTransientError)) throw error;
+    }
+  }
 }
 
 /** validityTime w Paynow = dokładnie tyle, ile zostało lokalnej rezerwacji (min. 60 s wg API). */
@@ -76,6 +111,8 @@ export function remainingReservationSeconds(submission: Submission, now = new Da
 
 export interface ApplyStatusInput {
   providerPaymentId: string;
+  /** externalId z notyfikacji (= submission.id) — do podpięcia płatności, której paymentId jeszcze nie zapisaliśmy. */
+  externalId?: string;
   incomingStatus: PaymentStatus;
   incomingModifiedAt: Date | null;
   rawPayload: unknown;
@@ -121,10 +158,11 @@ async function sendPaidConfirmationEmailIfNeeded(submissionId: string): Promise<
  */
 export async function applyProviderStatus(input: ApplyStatusInput): Promise<ApplyStatusResult> {
   const result = await prisma.$transaction(async (tx) => {
-    const payment = await tx.payment.findUnique({
-      where: { providerPaymentId: input.providerPaymentId },
-      include: { submission: true },
-    });
+    const payment =
+      (await tx.payment.findUnique({
+        where: { providerPaymentId: input.providerPaymentId },
+        include: { submission: true },
+      })) ?? (await attachByExternalId(tx, input));
     if (!payment) return { outcome: 'unknown-payment' } as const;
 
     const decision = decideStatusUpdate({
@@ -151,6 +189,13 @@ export async function applyProviderStatus(input: ApplyStatusInput): Promise<Appl
         providerPayloadJson: input.rawPayload as object,
       },
     });
+
+    if (input.incomingStatus === 'CONFIRMED' && payment.submission.status === 'PAID') {
+      // Zgłoszenie opłacone już inną próbą — pieniądze wpłynęły drugi raz i trzeba je zwrócić.
+      console.error(
+        `[paynow] PODWÓJNA WPŁATA: płatność ${input.providerPaymentId} potwierdzona dla już opłaconego zgłoszenia ${payment.submissionId} — wymaga zwrotu`,
+      );
+    }
 
     let submissionPaid = false;
     if (input.incomingStatus === 'CONFIRMED' && payment.submission.status !== 'PAID') {
@@ -186,6 +231,27 @@ export async function applyProviderStatus(input: ApplyStatusInput): Promise<Appl
   }
 
   return result;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Notyfikacja może wyprzedzić zapis paymentId po `POST /v3/payments` (albo ten zapis
+ * w ogóle się nie udał przez timeout). Zgłoszenie ma najwyżej jedną otwartą próbę bez
+ * paymentId, więc to ją Paynow utworzył — podpinamy identyfikator z podpisanej notyfikacji.
+ */
+async function attachByExternalId(tx: Tx, input: ApplyStatusInput) {
+  if (!input.externalId || !UUID_RE.test(input.externalId)) return null;
+  const pending = await tx.payment.findFirst({
+    where: { submissionId: input.externalId, providerPaymentId: null, status: 'NEW' },
+    orderBy: { createdAt: 'desc' },
+  });
+  if (!pending) return null;
+  return tx.payment.update({
+    where: { id: pending.id },
+    data: { providerPaymentId: input.providerPaymentId },
+    include: { submission: true },
+  });
 }
 
 export { PaynowTransientError };

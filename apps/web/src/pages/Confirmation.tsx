@@ -154,13 +154,15 @@ export default function Confirmation() {
   const paymentFailed =
     status?.status === 'RESERVED' &&
     ['REJECTED', 'ERROR', 'ABANDONED', 'EXPIRED'].includes(status.lastPayment?.status ?? '');
+  // Paynow nie odpowiedział przy tworzeniu płatności — klient jeszcze nie był na bramce.
+  const paymentNotStarted = status?.status === 'RESERVED' && !paymentFailed && !status.lastPayment?.redirectUrl;
   const eventUrl = status ? `/f/${status.formSlug}` : '/';
 
   const retryButton = status?.canRetry && (
     <div>
       <button className="btn-primary" onClick={retry} disabled={busy}>
         <RefreshCw className={`h-4 w-4 ${busy ? 'animate-spin' : ''}`} aria-hidden />
-        {busy ? 'Przekierowanie…' : 'Ponów płatność'}
+        {busy ? 'Przekierowanie…' : paymentNotStarted ? 'Przejdź do płatności' : 'Ponów płatność'}
       </button>
     </div>
   );
@@ -287,8 +289,14 @@ export default function Confirmation() {
         {status?.status === 'RESERVED' && !paymentFailed && (
           <>
             <StatusIcon tone="pending" icon={Hourglass} />
-            <h1 className="text-2xl font-bold text-slate-900">Czekamy na potwierdzenie płatności</h1>
-            <p className="text-slate-600">Miejsce jest zarezerwowane. Strona odświeża status automatycznie.</p>
+            <h1 className="text-2xl font-bold text-slate-900">
+              {paymentNotStarted ? 'Dokończ płatność' : 'Czekamy na potwierdzenie płatności'}
+            </h1>
+            <p className="text-slate-600">
+              {paymentNotStarted
+                ? 'Miejsce jest zarezerwowane, ale nie udało się połączyć z operatorem płatności. Spróbuj ponownie.'
+                : 'Miejsce jest zarezerwowane. Strona odświeża status automatycznie.'}
+            </p>
             {status.reservationExpiresAt && (
               <ReservationCountdown expiresAt={status.reservationExpiresAt} onExpire={refresh} />
             )}

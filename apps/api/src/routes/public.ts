@@ -13,7 +13,6 @@ import {
 } from '@syjonevent/shared';
 import { asyncHandler } from '../http/async-handler.js';
 import { conflict, gone, notFound } from '../http/errors.js';
-import { getPaymentStatus } from '../paynow/client.js';
 import { renderCustomEmailContent } from '../services/email-variables.js';
 import { buildFreeConfirmationEmail, sendMail } from '../services/mailer.js';
 import { ensureTicketNonce, renderTicketQrPng, ticketEmailAttachment } from '../services/tickets.js';
@@ -21,12 +20,7 @@ import { guessDisplayName } from '../services/participants.js';
 import { ticketReference } from '../utils/ticket-code.js';
 import { prisma } from '../prisma.js';
 import { countOccupancy } from '../services/capacity.js';
-import {
-  applyProviderStatus,
-  confirmationUrl,
-  PaynowTransientError,
-  startPaymentAttempt,
-} from '../services/payments.js';
+import { confirmationUrl, startPaymentAttempt, syncOpenPayments } from '../services/payments.js';
 import {
   assertFormOpen,
   assertPublicToken,
@@ -215,13 +209,20 @@ publicRouter.post(
       return;
     }
 
-    const payment = await startPaymentAttempt(submission, publicToken, form.title);
+    let redirectUrl: string | null = null;
+    try {
+      redirectUrl = (await startPaymentAttempt(submission, publicToken, form.title)).redirectUrl;
+    } catch (error) {
+      // Zgłoszenie już istnieje i trzyma miejsce — bez tokenu klient nie mógłby do niego
+      // wrócić. Kierujemy go na stronę potwierdzenia, skąd ponowi płatność.
+      console.error(`[paynow] nie udało się rozpocząć płatności dla zgłoszenia ${submission.id}:`, error);
+    }
 
     const response: CreateSubmissionResponse = {
       submissionId: submission.id,
       publicToken,
       confirmationUrl: confirmation,
-      redirectUrl: payment.redirectUrl,
+      redirectUrl,
       status: 'RESERVED',
     };
     res.status(201).json(response);
@@ -240,34 +241,13 @@ publicRouter.get(
   asyncHandler(async (req, res) => {
     const submissionRecord = await prisma.submission.findUnique({
       where: { id: req.params.id as string },
-      include: { payments: { orderBy: { createdAt: 'desc' }, take: 1 }, form: true },
+      include: { form: true },
     });
     if (!submissionRecord) throw notFound('Nie znaleziono zgłoszenia');
     assertPublicToken(submissionRecord, extractToken(req as never));
 
-    const latest = submissionRecord.payments[0] ?? null;
-
     // Fallback: webhook mógł jeszcze nie dotrzeć — pytamy Paynow o status serwerowo.
-    if (
-      latest?.providerPaymentId &&
-      submissionRecord.status === 'RESERVED' &&
-      ['NEW', 'PENDING'].includes(latest.status)
-    ) {
-      try {
-        const remote = await getPaymentStatus(latest.providerPaymentId);
-        if (remote) {
-          await applyProviderStatus({
-            providerPaymentId: latest.providerPaymentId,
-            incomingStatus: remote.status,
-            incomingModifiedAt: remote.modifiedAt,
-            rawPayload: remote.raw,
-          });
-        }
-      } catch (error) {
-        // Brak odpowiedzi Paynow nie może wywrócić strony potwierdzenia.
-        if (!(error instanceof PaynowTransientError)) throw error;
-      }
-    }
+    if (submissionRecord.status === 'RESERVED') await syncOpenPayments(submissionRecord.id);
 
     const fresh = await materializeExpiry(
       (await prisma.submission.findUniqueOrThrow({ where: { id: submissionRecord.id } })),
@@ -346,7 +326,11 @@ publicRouter.post(
     if (!submission) throw notFound('Nie znaleziono zgłoszenia');
     assertPublicToken(submission, token);
 
-    const fresh = await materializeExpiry(submission);
+    // Otwarta próba mogła się już rozstrzygnąć w Paynow — bez tego wznowilibyśmy martwą bramkę.
+    await syncOpenPayments(submission.id);
+    const fresh = await materializeExpiry(
+      await prisma.submission.findUniqueOrThrow({ where: { id: submission.id } }),
+    );
     if (fresh.status === 'PAID') throw conflict('Zgłoszenie jest już opłacone', 'ALREADY_PAID');
     if (fresh.status !== 'RESERVED' || !fresh.reservationExpiresAt || fresh.reservationExpiresAt <= new Date()) {
       throw gone(
@@ -356,7 +340,7 @@ publicRouter.post(
     }
 
     // Ponowna próba nie może "wskrzesić" miejsca — rezerwacja wciąż musi być ważna,
-    // a jej TTL nie jest przedłużany.
+    // a jej TTL nie jest przedłużany. Niezakończona płatność w Paynow jest wznawiana, a nie dublowana.
     const payment = await startPaymentAttempt(fresh, token as string, submission.form.title);
     res.json({ redirectUrl: payment.redirectUrl });
   }),
