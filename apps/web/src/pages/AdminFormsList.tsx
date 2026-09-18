@@ -14,6 +14,7 @@ import {
   ScanLine,
   Plus,
   Trash2,
+  UserRound,
   Users,
 } from 'lucide-react';
 import { api, ApiError, formatDateTime } from '../lib/api';
@@ -37,6 +38,7 @@ interface FormRow {
   reservedCount: number;
   submissionCount: number;
   thumbnailUrl: string | null;
+  createdByEmail: string | null;
 }
 
 type Tab = 'ALL' | FormStatus;
@@ -331,6 +333,12 @@ export default function AdminFormsList() {
                     <span className="inline-flex items-center gap-1.5">
                       <Hourglass className="h-4 w-4 text-blue-500" aria-hidden />
                       {plural(form.reservedCount, 'rezerwacja', 'rezerwacje', 'rezerwacji')}
+                    </span>
+                  )}
+                  {form.createdByEmail && (
+                    <span className="inline-flex items-center gap-1.5 text-slate-400" title="Utworzone przez">
+                      <UserRound className="h-4 w-4" aria-hidden />
+                      {form.createdByEmail}
                     </span>
                   )}
                 </div>

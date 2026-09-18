@@ -272,4 +272,7 @@ export interface SubmissionStatusDto {
   /** Numer biletu — obecny tylko dla opłaconego zgłoszenia, wtedy dostępny jest też obraz QR. */
   ticketReference: string | null;
   checkedInAt: string | null;
+  /** Zgadywane z pól formularza po etykiecie ("Imię"/"Nazwisko") — może nie być dopasowania. */
+  buyerName: string | null;
+  buyerEmail: string;
 }

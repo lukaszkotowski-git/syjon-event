@@ -52,7 +52,10 @@ adminFormsRouter.get(
   '/',
   asyncHandler(async (_req, res) => {
     const now = new Date();
-    const forms = await prisma.form.findMany({ orderBy: { createdAt: 'desc' } });
+    const forms = await prisma.form.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: { createdByAdmin: { select: { email: true } } },
+    });
     const counts = await prisma.submission.groupBy({
       by: ['formId', 'status'],
       _count: { _all: true },
@@ -76,6 +79,7 @@ adminFormsRouter.get(
           // Wszystkie zgłoszenia (także wygasłe/anulowane) — decyduje, czy wydarzenie można usunąć.
           submissionCount: rows.reduce((sum, r) => sum + r._count._all, 0),
           thumbnailUrl: form.backgroundImageDesktopUrl ?? form.backgroundImageMobileUrl,
+          createdByEmail: form.createdByAdmin?.email ?? null,
         };
       }),
     });
@@ -104,6 +108,7 @@ adminFormsRouter.post(
           confirmationEmailTitle: body.confirmationEmailTitle ?? null,
           confirmationEmailBody: body.confirmationEmailBody ?? null,
           schemaJson: (body.schemaJson ?? EMPTY_FORM_SCHEMA) as object,
+          createdByAdminId: req.admin!.id,
         },
       });
       res.status(201).json({ form });

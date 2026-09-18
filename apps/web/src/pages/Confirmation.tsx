@@ -192,7 +192,17 @@ export default function Confirmation() {
             <h1 className="text-2xl font-bold text-slate-900">{content?.successTitle || 'Rejestracja potwierdzona'}</h1>
             {content?.successBody && <p className="whitespace-pre-line text-slate-600">{content.successBody}</p>}
             <div className="rounded-2xl border border-brand-100 bg-brand-50/60 p-4 text-left">
-              <div className="flex items-center justify-between">
+              {status.buyerName && (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium uppercase tracking-wide text-brand-700/80">Uczestnik</span>
+                  <span className="font-semibold text-slate-900">{status.buyerName}</span>
+                </div>
+              )}
+              <div className={`flex items-center justify-between ${status.buyerName ? 'mt-2' : ''}`}>
+                <span className="text-xs font-medium uppercase tracking-wide text-brand-700/80">E-mail</span>
+                <span className="font-semibold text-slate-900">{status.buyerEmail}</span>
+              </div>
+              <div className="mt-2 flex items-center justify-between">
                 <span className="text-xs font-medium uppercase tracking-wide text-brand-700/80">Bilet</span>
                 <span className="font-semibold text-slate-900">{status.ticketName}</span>
               </div>

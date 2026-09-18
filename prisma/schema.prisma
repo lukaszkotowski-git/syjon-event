@@ -55,7 +55,8 @@ model Admin {
   updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
   disabledAt   DateTime? @map("disabled_at") @db.Timestamptz(3)
 
-  sessions Session[]
+  sessions      Session[]
+  createdForms  Form[]    @relation("FormCreatedBy")
 
   @@map("admins")
 }
@@ -99,7 +100,10 @@ model Form {
   createdAt                 DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt                 DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
   archivedAt                DateTime?  @map("archived_at") @db.Timestamptz(3)
+  // Konto administratora usunięte po utworzeniu wydarzenia nie może zablokować wydarzenia — stąd SetNull.
+  createdByAdminId          String?    @map("created_by_admin_id") @db.Uuid
 
+  createdByAdmin  Admin?           @relation("FormCreatedBy", fields: [createdByAdminId], references: [id], onDelete: SetNull)
   ticketTypes     TicketType[]
   submissions     Submission[]
   discountCodes   DiscountCode[]

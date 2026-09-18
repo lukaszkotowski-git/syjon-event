@@ -17,6 +17,7 @@ import { getPaymentStatus } from '../paynow/client.js';
 import { renderCustomEmailContent } from '../services/email-variables.js';
 import { buildFreeConfirmationEmail, sendMail } from '../services/mailer.js';
 import { ensureTicketNonce, renderTicketQrPng, ticketEmailAttachment } from '../services/tickets.js';
+import { guessDisplayName } from '../services/participants.js';
 import { ticketReference } from '../utils/ticket-code.js';
 import { prisma } from '../prisma.js';
 import { countOccupancy } from '../services/capacity.js';
@@ -310,6 +311,8 @@ publicRouter.get(
       confirmationEmailSent: fresh.confirmationEmailSentAt !== null,
       ticketReference: fresh.status === 'PAID' ? ticketReference(fresh.id) : null,
       checkedInAt: fresh.checkedInAt?.toISOString() ?? null,
+      buyerName: guessDisplayName(fresh.schemaSnapshotJson, fresh.payloadJson),
+      buyerEmail: fresh.buyerEmail,
     };
     res.json(dto);
   }),
