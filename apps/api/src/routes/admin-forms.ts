@@ -1,4 +1,5 @@
-import { unlink } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { copyFile, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { Router } from 'express';
 import { z } from 'zod';
@@ -10,6 +11,8 @@ import {
   flattenSections,
   formSchemaJson,
   MAX_DISCOUNT_CODES_PER_FORM,
+  pickVisibleAnswers,
+  type ConsentRecord,
   MAX_TICKET_TYPES_PER_FORM,
   ticketTypeInput,
   updateDiscountCodeRequest,
@@ -21,6 +24,7 @@ import { requireAdmin } from '../auth/middleware.js';
 import { asyncHandler } from '../http/async-handler.js';
 import { badRequest, conflict, notFound } from '../http/errors.js';
 import { prisma } from '../prisma.js';
+import { audit, changedKeys } from '../services/audit.js';
 import { countOccupancy, isUniqueViolation } from '../services/capacity.js';
 import { guessDisplayName, normalizeSearchText } from '../services/participants.js';
 import { parseFormSchema } from '../services/registration.js';
@@ -48,6 +52,26 @@ async function getFormOr404(id: string) {
 }
 
 /* --------------------------------- formularze ------------------------------ */
+
+/** Czytelne nazwy pól wydarzenia w dzienniku zmian. */
+const FORM_FIELD_LABELS: Record<string, string> = {
+  slug: 'adres',
+  title: 'tytuł',
+  description: 'opis',
+  eventDate: 'data',
+  closesAt: 'zamknięcie zapisów',
+  location: 'miejsce',
+  capacityTotal: 'limit miejsc',
+  termsVersion: 'wersja regulaminu',
+  privacyPolicyVersion: 'wersja polityki prywatności',
+  paymentSuccessTitle: 'strona po płatności',
+  paymentSuccessBody: 'strona po płatności',
+  paymentErrorTitle: 'strona po płatności',
+  paymentErrorBody: 'strona po płatności',
+  confirmationEmailTitle: 'e-mail',
+  confirmationEmailBody: 'e-mail',
+  schemaJson: 'pola formularza',
+};
 
 adminFormsRouter.get(
   '/',
@@ -99,6 +123,7 @@ adminFormsRouter.post(
           description: body.description ?? null,
           eventDate: new Date(body.eventDate),
           closesAt: new Date(body.closesAt),
+          location: body.location || null,
           capacityTotal: body.capacityTotal ?? null,
           termsVersion: body.termsVersion,
           privacyPolicyVersion: body.privacyPolicyVersion,
@@ -112,6 +137,7 @@ adminFormsRouter.post(
           createdByAdminId: req.admin!.id,
         },
       });
+      await audit(req, { action: 'form.create', formId: form.id, entityId: form.id, summary: `Utworzono wydarzenie „${form.title}”` });
       res.status(201).json({ form });
     } catch (error) {
       if (isUniqueViolation(error)) throw conflict('Formularz z tym adresem (slug) już istnieje', 'SLUG_TAKEN');
@@ -167,6 +193,7 @@ adminFormsRouter.patch(
           ...(body.description !== undefined ? { description: body.description ?? null } : {}),
           ...(body.eventDate !== undefined ? { eventDate: new Date(body.eventDate) } : {}),
           ...(body.closesAt !== undefined ? { closesAt: new Date(body.closesAt) } : {}),
+          ...(body.location !== undefined ? { location: body.location || null } : {}),
           ...(body.capacityTotal !== undefined ? { capacityTotal: body.capacityTotal ?? null } : {}),
           ...(body.termsVersion !== undefined ? { termsVersion: body.termsVersion } : {}),
           ...(body.privacyPolicyVersion !== undefined
@@ -193,6 +220,24 @@ adminFormsRouter.patch(
           ...(body.schemaJson !== undefined ? { schemaJson: body.schemaJson as object } : {}),
         },
       });
+      const changed = changedKeys(
+        {
+          ...form,
+          eventDate: form.eventDate.toISOString(),
+          closesAt: form.closesAt.toISOString(),
+          schemaJson: parseFormSchema(form.schemaJson),
+        },
+        { ...body, ...(body.schemaJson ? { schemaJson: parseFormSchema(body.schemaJson) } : {}) },
+      );
+      if (changed.length > 0) {
+        await audit(req, {
+          action: 'form.update',
+          formId: form.id,
+          entityId: form.id,
+          summary: `Zmieniono wydarzenie „${updated.title}”: ${changed.map((key) => FORM_FIELD_LABELS[key] ?? key).join(', ')}`,
+          details: { changed },
+        });
+      }
       res.json({ form: updated });
     } catch (error) {
       if (isUniqueViolation(error)) throw conflict('Formularz z tym adresem (slug) już istnieje', 'SLUG_TAKEN');
@@ -213,6 +258,7 @@ adminFormsRouter.post(
       throw badRequest('Data zamknięcia rejestracji musi być w przyszłości');
     }
     const updated = await prisma.form.update({ where: { id: form.id }, data: { status: 'PUBLISHED' } });
+    await audit(req, { action: 'form.publish', formId: form.id, entityId: form.id, summary: `Opublikowano „${form.title}”` });
     res.json({ form: updated });
   }),
 );
@@ -226,7 +272,96 @@ adminFormsRouter.post(
       where: { id: form.id },
       data: { status: 'ARCHIVED', archivedAt: form.archivedAt ?? new Date() },
     });
+    await audit(req, { action: 'form.archive', formId: form.id, entityId: form.id, summary: `Zarchiwizowano „${form.title}”` });
     res.json({ form: updated });
+  }),
+);
+
+/** Wolny slug dla kopii: "wyjazd-kopia", "wyjazd-kopia-2", … */
+async function freeCopySlug(slug: string): Promise<string> {
+  const base = `${slug.slice(0, 70)}-kopia`;
+  for (let n = 1; n < 100; n += 1) {
+    const candidate = n === 1 ? base : `${base}-${n}`;
+    if (!(await prisma.form.findUnique({ where: { slug: candidate }, select: { id: true } }))) return candidate;
+  }
+  return `${base}-${randomUUID().slice(0, 8)}`;
+}
+
+/** Kopia pliku tła — każde wydarzenie ma własny plik, bo usunięcie tła kasuje go z dysku. */
+async function copyUploadedFile(url: string | null): Promise<string | null> {
+  if (!url || !url.startsWith('/api/uploads/')) return url;
+  const source = path.basename(url);
+  const target = `${randomUUID()}${path.extname(source)}`;
+  try {
+    await copyFile(path.join(UPLOAD_DIR, source), path.join(UPLOAD_DIR, target));
+    return uploadPublicUrl(target);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Kopia wydarzenia jako szkic: treści, pola, zgody, bilety, kody rabatowe i grafiki.
+ * Zgłoszenia, stanowiska skanowania i historia nie są kopiowane.
+ */
+adminFormsRouter.post(
+  '/:id/duplicate',
+  asyncHandler(async (req, res) => {
+    const source = await getFormOr404(req.params.id as string);
+    const [desktopUrl, mobileUrl] = await Promise.all([
+      copyUploadedFile(source.backgroundImageDesktopUrl),
+      copyUploadedFile(source.backgroundImageMobileUrl),
+    ]);
+    const copy = await prisma.form.create({
+      data: {
+        slug: await freeCopySlug(source.slug),
+        title: `${source.title} (kopia)`.slice(0, 200),
+        description: source.description,
+        status: 'DRAFT',
+        schemaJson: source.schemaJson as object,
+        capacityTotal: source.capacityTotal,
+        eventDate: source.eventDate,
+        closesAt: source.closesAt,
+        location: source.location,
+        termsVersion: source.termsVersion,
+        privacyPolicyVersion: source.privacyPolicyVersion,
+        paymentSuccessTitle: source.paymentSuccessTitle,
+        paymentSuccessBody: source.paymentSuccessBody,
+        paymentErrorTitle: source.paymentErrorTitle,
+        paymentErrorBody: source.paymentErrorBody,
+        confirmationEmailTitle: source.confirmationEmailTitle,
+        confirmationEmailBody: source.confirmationEmailBody,
+        backgroundImageDesktopUrl: desktopUrl,
+        backgroundImageMobileUrl: mobileUrl,
+        createdByAdminId: req.admin!.id,
+        ticketTypes: {
+          create: source.ticketTypes.map((ticket) => ({
+            name: ticket.name,
+            priceCents: ticket.priceCents,
+            currency: ticket.currency,
+            capacity: ticket.capacity,
+            sortOrder: ticket.sortOrder,
+            isActive: ticket.isActive,
+          })),
+        },
+        discountCodes: {
+          create: source.discountCodes.map((code) => ({
+            code: code.code,
+            type: code.type,
+            value: code.value,
+            isActive: code.isActive,
+          })),
+        },
+      },
+    });
+    await audit(req, {
+      action: 'form.duplicate',
+      formId: copy.id,
+      entityId: copy.id,
+      summary: `Utworzono kopię „${source.title}”`,
+      details: { sourceFormId: source.id },
+    });
+    res.status(201).json({ form: copy });
   }),
 );
 
@@ -259,6 +394,7 @@ adminFormsRouter.post(
       where: { id: form.id },
       data: { [field]: uploadPublicUrl(req.file.filename) },
     });
+    await audit(req, { action: 'form.background', formId: form.id, entityId: form.id, summary: `Wgrano grafikę tła (${variant}) w „${form.title}”` });
     res.json({ form: updated });
   }),
 );
@@ -303,6 +439,12 @@ adminFormsRouter.delete(
       prisma.form.delete({ where: { id: form.id } }),
     ]);
 
+    await audit(req, {
+      action: 'form.delete',
+      formId: form.id,
+      entityId: form.id,
+      summary: `Usunięto wydarzenie „${form.title}”${submissionCount > 0 ? ` wraz z ${submissionCount} zgłoszeniami` : ''}`,
+    });
     res.status(204).end();
   }),
 );
@@ -327,6 +469,7 @@ adminFormsRouter.post(
         isActive: body.isActive,
       },
     });
+    await audit(req, { action: 'ticket_type.create', formId: form.id, entityId: ticket.id, summary: `Dodano bilet „${ticket.name}” w „${form.title}”` });
     res.status(201).json({ ticket });
   }),
 );
@@ -349,6 +492,16 @@ adminFormsRouter.patch(
         ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
       },
     });
+    const changedTicket = changedKeys(ticket as Record<string, unknown>, { ...body });
+    if (changedTicket.length > 0) {
+      await audit(req, {
+        action: 'ticket_type.update',
+        formId: form.id,
+        entityId: ticket.id,
+        summary: `Zmieniono bilet „${updated.name}” w „${form.title}”`,
+        details: { changed: changedTicket },
+      });
+    }
     // Zmiana ceny/nazwy nie rusza istniejących zgłoszeń — one mają własne snapshoty.
     res.json({ ticket: updated });
   }),
@@ -388,6 +541,7 @@ adminFormsRouter.post(
           isActive: body.isActive,
         },
       });
+      await audit(req, { action: 'discount_code.create', formId: form.id, entityId: discountCode.id, summary: `Dodano kod rabatowy ${discountCode.code} w „${form.title}”` });
       res.status(201).json({ discountCode: { ...discountCode, usageCount: 0 } });
     } catch (error) {
       if (isUniqueViolation(error)) {
@@ -416,6 +570,9 @@ adminFormsRouter.patch(
           ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
         },
       });
+      if (changedKeys(discountCode as Record<string, unknown>, { ...body }).length > 0) {
+        await audit(req, { action: 'discount_code.update', formId: form.id, entityId: discountCode.id, summary: `Zmieniono kod rabatowy ${updated.code} w „${form.title}”` });
+      }
       // Zmiana wartości/kodu nie rusza już złożonych zgłoszeń — one mają własny snapshot.
       res.json({ discountCode: updated });
     } catch (error) {
@@ -442,6 +599,12 @@ adminFormsRouter.post(
 );
 
 /* --------------------------------- zgłoszenia ------------------------------ */
+
+/** Odpowiedzi po edycji przez admina — ta sama logika pól warunkowych co przy rejestracji. */
+function validAnswers(schema: ReturnType<typeof parseFormSchema>, answers: Record<string, unknown>) {
+  const visible = pickVisibleAnswers(flattenSections(schema.sections), answers);
+  return buildAnswersSchema(visible.fields).parse(visible.answers);
+}
 
 async function submissionDetail(formId: string, submissionId: string) {
   const found = await prisma.submission.findFirst({
@@ -590,6 +753,15 @@ adminFormsRouter.get(
       }
     }
 
+    // Zgody dodatkowe: kolumna na każdą zgodę, która wystąpiła w eksportowanych zgłoszeniach.
+    const consentLabels = new Map<string, string>();
+    for (const submission of submissions) {
+      for (const consent of submission.consentsJson as unknown as ConsentRecord[]) {
+        if (!consentLabels.has(consent.key)) consentLabels.set(consent.key, consent.label);
+      }
+    }
+    const consentKeys = [...consentLabels.keys()];
+
     const header = [
       'id',
       'utworzono',
@@ -606,6 +778,7 @@ adminFormsRouter.get(
       'polityka_wersja',
       'akceptacja_czas',
       ...dynamicKeys.map((key) => labels.get(key) ?? key),
+      ...consentKeys.map((key) => `zgoda: ${consentLabels.get(key)}`),
     ];
 
     const rows = submissions.map((submission) => {
@@ -626,6 +799,10 @@ adminFormsRouter.get(
         submission.privacyPolicyVersionAccepted,
         submission.legalAcceptedAt.toISOString(),
         ...dynamicKeys.map((key) => payload[key] ?? ''),
+        ...consentKeys.map((key) => {
+          const consent = (submission.consentsJson as unknown as ConsentRecord[]).find((c) => c.key === key);
+          return consent ? (consent.accepted ? 'tak' : 'nie') : '';
+        }),
       ];
     });
 
@@ -663,11 +840,27 @@ adminFormsRouter.patch(
         ...(body.buyerAddress !== undefined ? { buyerAddress: body.buyerAddress } : {}),
         // Odpowiedzi walidujemy tym samym schematem co przy rejestracji — ten sam
         // snapshot pól, który obowiązywał w momencie zgłoszenia.
-        ...(body.answers !== undefined
-          ? { payloadJson: buildAnswersSchema(flattenSections(schema.sections)).parse(body.answers) as object }
-          : {}),
+        ...(body.answers !== undefined ? { payloadJson: validAnswers(schema, body.answers) as object } : {}),
       },
     });
+    const changedSubmission = changedKeys(
+      { buyerEmail: submission.buyerEmail, buyerPhone: submission.buyerPhone, buyerAddress: submission.buyerAddress, answers: submission.payloadJson },
+      {
+        ...(body.buyerEmail !== undefined ? { buyerEmail: updated.buyerEmail } : {}),
+        ...(body.buyerPhone !== undefined ? { buyerPhone: updated.buyerPhone } : {}),
+        ...(body.buyerAddress !== undefined ? { buyerAddress: updated.buyerAddress } : {}),
+        ...(body.answers !== undefined ? { answers: updated.payloadJson } : {}),
+      },
+    );
+    if (changedSubmission.length > 0) {
+      await audit(req, {
+        action: 'submission.update',
+        formId: form.id,
+        entityId: submission.id,
+        summary: `Edytowano zgłoszenie ${ticketReference(submission.id)} (${updated.buyerEmail})`,
+        details: { changed: changedSubmission },
+      });
+    }
 
     res.json({ submission: await submissionDetail(form.id, updated.id) });
   }),

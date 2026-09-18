@@ -7,10 +7,12 @@ import {
   formSchemaJson,
   MIN_PAID_AMOUNT_CENTS,
   normalizeDiscountCode,
+  pickVisibleAnswers,
+  resolveConsents,
   type CreateSubmissionRequest,
 } from '@syjonevent/shared';
 import { env } from '../env.js';
-import { conflict, gone, notFound } from '../http/errors.js';
+import { badRequest, conflict, gone, notFound } from '../http/errors.js';
 import { prisma } from '../prisma.js';
 import { generatePublicToken, hashPublicToken } from '../utils/tokens.js';
 import { checkAvailability, lockForm } from './capacity.js';
@@ -44,8 +46,13 @@ export async function createRegistration(
 ): Promise<CreatedRegistration> {
   const schema = parseFormSchema(form.schemaJson);
 
-  // Walidacja odpowiedzi po stronie serwera tym samym kodem, co na froncie.
-  const answers = buildAnswersSchema(flattenSections(schema.sections)).parse(body.answers);
+  // Walidacja odpowiedzi po stronie serwera tym samym kodem, co na froncie. Pola ukryte
+  // warunkiem pomijamy — nie są wymagane i nie trafiają do bazy.
+  const visible = pickVisibleAnswers(flattenSections(schema.sections), body.answers);
+  const answers = buildAnswersSchema(visible.fields).parse(visible.answers);
+
+  const consents = resolveConsents(schema.consents, body.consents);
+  if (!consents.ok) throw badRequest(consents.message, { consent: consents.key });
 
   const publicToken = generatePublicToken();
 
@@ -108,6 +115,7 @@ export async function createRegistration(
         termsVersionAccepted: form.termsVersion,
         privacyPolicyVersionAccepted: form.privacyPolicyVersion,
         legalAcceptedAt: now,
+        consentsJson: consents.consents as object[],
         status: isFree ? 'PAID' : 'RESERVED',
         reservationExpiresAt: isFree
           ? null

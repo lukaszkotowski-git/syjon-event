@@ -5,12 +5,16 @@ import './index.css';
 import { ConfirmProvider } from './components/ui/ConfirmDialog';
 import { ToastProvider } from './components/ui/Toast';
 import AdminAttendance from './pages/AdminAttendance';
+import AdminAuditLog from './pages/AdminAuditLog';
 import AdminDashboard from './pages/AdminDashboard';
 import AdminFormEditor from './pages/AdminFormEditor';
 import AdminFormsList from './pages/AdminFormsList';
 import AdminLayout from './pages/AdminLayout';
 import AdminLogin from './pages/AdminLogin';
+import AdminMessages from './pages/AdminMessages';
+import AdminReports from './pages/AdminReports';
 import AdminSubmissions from './pages/AdminSubmissions';
+import AdminTeam from './pages/AdminTeam';
 import Confirmation from './pages/Confirmation';
 import Home from './pages/Home';
 import PaymentMethods from './pages/PaymentMethods';
@@ -36,6 +40,10 @@ const router = createBrowserRouter([
       { path: 'formularze/:id', element: <AdminFormEditor /> },
       { path: 'formularze/:id/zgloszenia', element: <AdminSubmissions /> },
       { path: 'formularze/:id/obecnosc', element: <AdminAttendance /> },
+      { path: 'formularze/:id/wiadomosci', element: <AdminMessages /> },
+      { path: 'formularze/:id/raporty', element: <AdminReports /> },
+      { path: 'zespol', element: <AdminTeam /> },
+      { path: 'dziennik', element: <AdminAuditLog /> },
     ],
   },
 ]);

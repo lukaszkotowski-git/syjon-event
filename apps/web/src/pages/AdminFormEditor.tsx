@@ -9,17 +9,22 @@ import {
   CircleX,
   Code,
   Copy,
+  CopyPlus,
   CreditCard,
   Ellipsis,
   ExternalLink,
+  Eye,
   Globe,
+  History,
   Image,
   Info,
   ListChecks,
   LoaderCircle,
   Mail,
+  MapPin,
   Save,
   ScanLine,
+  ShieldCheck,
   Ticket,
   TicketPercent,
   Trash2,
@@ -33,12 +38,14 @@ import {
   knownVariableNames,
   normalizeVariableName,
   templateVariableNames,
+  type ConsentDefinition,
   type DiscountCodeDto,
   type FormSection,
 } from '@syjonevent/shared';
 import SectionBuilder, { sectionBuilderErrors } from '../components/SectionBuilder';
 import RichTextEditor from '../components/RichTextEditor';
 import BackgroundUploader from '../components/editor/BackgroundUploader';
+import ConsentsEditor, { consentsErrors } from '../components/editor/ConsentsEditor';
 import DiscountCodesEditor, { discountCodeError, type DiscountCodeDraft } from '../components/editor/DiscountCodesEditor';
 import EditorNav, { type NavSection } from '../components/editor/EditorNav';
 import TicketsEditor, { ticketError, type TicketDraft } from '../components/editor/TicketsEditor';
@@ -47,6 +54,7 @@ import IconButton from '../components/ui/IconButton';
 import Menu, { type MenuItem } from '../components/ui/Menu';
 import StatusBadge from '../components/ui/StatusBadge';
 import { useToast } from '../components/ui/Toast';
+import { useCanEdit } from '../lib/admin';
 import { api, ApiError } from '../lib/api';
 import { centsToPlnInput, normalizeHtml, parsePlnInput, slugify } from '../lib/format';
 import { FORM_STATUS, type FormStatus } from '../lib/status';
@@ -68,6 +76,7 @@ interface FormDetails {
   status: FormStatus;
   eventDate: string;
   closesAt: string;
+  location: string | null;
   capacityTotal: number | null;
   termsVersion: string;
   privacyPolicyVersion: string;
@@ -79,7 +88,7 @@ interface FormDetails {
   confirmationEmailBody: string | null;
   backgroundImageDesktopUrl: string | null;
   backgroundImageMobileUrl: string | null;
-  schemaJson: { sections: FormSection[]; customScript?: string };
+  schemaJson: { sections: FormSection[]; consents?: ConsentDefinition[]; customScript?: string };
   ticketTypes: TicketDto[];
   discountCodes: DiscountCodeDto[];
 }
@@ -95,6 +104,7 @@ interface Draft {
   description: string;
   eventDate: string;
   closesAt: string;
+  location: string;
   capacityTotal: string;
   termsVersion: string;
   privacyPolicyVersion: string;
@@ -109,6 +119,7 @@ interface Draft {
 interface EditorState {
   draft: Draft;
   sections: FormSection[];
+  consents: ConsentDefinition[];
   customScript: string;
   tickets: TicketDraft[];
   discountCodes: DiscountCodeDraft[];
@@ -119,6 +130,7 @@ const NAV_SECTIONS: NavSection[] = [
   { id: 'pola', label: 'Pola formularza', icon: ListChecks },
   { id: 'bilety', label: 'Bilety', icon: Ticket },
   { id: 'rabaty', label: 'Kody rabatowe', icon: TicketPercent },
+  { id: 'zgody', label: 'Zgody', icon: ShieldCheck },
   { id: 'wyglad', label: 'Wygląd', icon: Image },
   { id: 'email', label: 'E-mail', icon: Mail },
   { id: 'zaawansowane', label: 'Zaawansowane', icon: Code },
@@ -164,6 +176,7 @@ function emptyState(): EditorState {
       description: '',
       eventDate: toLocalDateInput(new Date(Date.now() + 30 * 86_400_000).toISOString()),
       closesAt: toLocalDateInput(new Date(Date.now() + 29 * 86_400_000).toISOString()),
+      location: '',
       capacityTotal: '',
       termsVersion: '1.0',
       privacyPolicyVersion: '1.0',
@@ -175,6 +188,7 @@ function emptyState(): EditorState {
       confirmationEmailBody: '',
     },
     sections: defaultSections(),
+    consents: [],
     customScript: '',
     tickets: [],
     discountCodes: [],
@@ -189,6 +203,7 @@ function stateFromForm(form: FormDetails): EditorState {
       description: form.description ?? '',
       eventDate: toLocalDateInput(form.eventDate),
       closesAt: toLocalDateInput(form.closesAt),
+      location: form.location ?? '',
       capacityTotal: form.capacityTotal?.toString() ?? '',
       termsVersion: form.termsVersion,
       privacyPolicyVersion: form.privacyPolicyVersion,
@@ -200,6 +215,7 @@ function stateFromForm(form: FormDetails): EditorState {
       confirmationEmailBody: form.confirmationEmailBody ?? '',
     },
     sections: form.schemaJson.sections ?? [],
+    consents: form.schemaJson.consents ?? [],
     customScript: form.schemaJson.customScript ?? '',
     tickets: [...form.ticketTypes]
       .sort((a, b) => a.sortOrder - b.sortOrder)
@@ -229,6 +245,7 @@ function snapshot(state: EditorState): string {
     ...state.draft,
     description: normalizeHtml(state.draft.description),
     sections: state.sections,
+    consents: state.consents,
     customScript: state.customScript,
     tickets: state.tickets.map(({ key: _key, priceInput, ...rest }) => ({
       ...rest,
@@ -321,6 +338,7 @@ export default function AdminFormEditor() {
   const toast = useToast();
   const confirm = useConfirm();
   const isNew = !id;
+  const canEdit = useCanEdit();
   const formRef = useRef<HTMLFormElement>(null);
   const emailTitleRef = useRef<HTMLInputElement>(null);
   const emailBodyRef = useRef<HTMLTextAreaElement>(null);
@@ -331,6 +349,7 @@ export default function AdminFormEditor() {
   const [occupancy, setOccupancy] = useState<Occupancy>({ total: 0, perTicketType: {} });
   const [draft, setDraft] = useState<Draft>(initial.draft);
   const [sections, setSections] = useState<FormSection[]>(initial.sections);
+  const [consents, setConsents] = useState<ConsentDefinition[]>(initial.consents);
   const [customScript, setCustomScript] = useState(initial.customScript);
   const [tickets, setTickets] = useState<TicketDraft[]>(initial.tickets);
   const [discountCodes, setDiscountCodes] = useState<DiscountCodeDraft[]>(initial.discountCodes);
@@ -347,6 +366,7 @@ export default function AdminFormEditor() {
   const applyState = useCallback((state: EditorState) => {
     setDraft(state.draft);
     setSections(state.sections);
+    setConsents(state.consents);
     setCustomScript(state.customScript);
     setTickets(state.tickets);
     setDiscountCodes(state.discountCodes);
@@ -384,7 +404,7 @@ export default function AdminFormEditor() {
       .catch((error: ApiError) => setLoadError(error.message));
   }, [id, fetchForm, hydrate, applyState]);
 
-  const current: EditorState = { draft, sections, customScript, tickets, discountCodes };
+  const current: EditorState = { draft, sections, consents, customScript, tickets, discountCodes };
   const currentSnapshot = snapshot(current);
   const dirty = currentSnapshot !== savedSnapshot;
 
@@ -450,6 +470,12 @@ export default function AdminFormEditor() {
       scrollToSection('pola');
       return false;
     }
+    const consentProblems = consentsErrors(consents);
+    if (consentProblems.length > 0) {
+      toast.error(consentProblems[0] as string);
+      scrollToSection('zgody');
+      return false;
+    }
 
     setBusy(true);
     // Siatka bezpieczeństwa: opcje select mogą zawierać niedoczyszczone puste
@@ -469,6 +495,7 @@ export default function AdminFormEditor() {
       description: draft.description || null,
       eventDate: eventDateToIso(draft.eventDate),
       closesAt: closesAtToIso(draft.closesAt),
+      location: draft.location.trim() || null,
       capacityTotal: draft.capacityTotal === '' ? null : Number(draft.capacityTotal),
       termsVersion: draft.termsVersion,
       privacyPolicyVersion: draft.privacyPolicyVersion,
@@ -479,7 +506,11 @@ export default function AdminFormEditor() {
       paymentErrorBody: draft.paymentErrorBody || null,
       confirmationEmailTitle: draft.confirmationEmailTitle || null,
       confirmationEmailBody: draft.confirmationEmailBody || null,
-      schemaJson: { sections: cleanedSections, customScript: customScript || undefined },
+      schemaJson: {
+        sections: cleanedSections,
+        consents: consents.map((consent) => ({ ...consent, label: consent.label.trim(), url: consent.url?.trim() || undefined })),
+        customScript: customScript || undefined,
+      },
     };
 
     let formId = id ?? null;
@@ -652,6 +683,18 @@ export default function AdminFormEditor() {
     }
   }
 
+  async function duplicate() {
+    if (!form) return;
+    if (dirty && !(await persist())) return;
+    try {
+      const data = await api.post<{ form: { id: string } }>(`/api/forms/${form.id}/duplicate`);
+      toast.success('Utworzono kopię jako szkic — sprawdź daty i opublikuj');
+      navigate(`/admin/formularze/${data.form.id}`);
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : 'Nie udało się skopiować wydarzenia');
+    }
+  }
+
   async function copyPublicLink() {
     if (!form) return;
     try {
@@ -729,9 +772,15 @@ export default function AdminFormEditor() {
   const moreActions: MenuItem[] = form
     ? [
         { label: 'Kopiuj link publiczny', icon: Copy, onSelect: () => void copyPublicLink() },
-        ...(form.status !== 'ARCHIVED'
-          ? [{ label: 'Archiwizuj', icon: Archive, tone: 'danger' as const, onSelect: () => void archive() }]
-          : [{ label: 'Usuń trwale', icon: Trash2, tone: 'danger' as const, onSelect: () => void deleteForever() }]),
+        ...(canEdit
+          ? [
+              { label: 'Duplikuj', icon: CopyPlus, onSelect: () => void duplicate() },
+              { label: 'Historia zmian', icon: History, onSelect: () => navigate(`/admin/dziennik?formId=${form.id}`) },
+              form.status !== 'ARCHIVED'
+                ? { label: 'Archiwizuj', icon: Archive, onSelect: () => void archive() }
+                : { label: 'Usuń trwale', icon: Trash2, tone: 'danger' as const, onSelect: () => void deleteForever() },
+            ]
+          : []),
       ]
     : [];
 
@@ -815,7 +864,7 @@ export default function AdminFormEditor() {
                 Otwórz formularz
               </a>
             )}
-            {form.status === 'DRAFT' && (
+            {form.status === 'DRAFT' && canEdit && (
               <button type="button" className="btn-primary" onClick={() => void publish()} disabled={busy}>
                 <Globe className="h-4 w-4" aria-hidden />
                 Opublikuj
@@ -832,6 +881,13 @@ export default function AdminFormEditor() {
         )}
       </div>
 
+      {!canEdit && (
+        <p className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+          <Eye className="h-4 w-4 shrink-0" aria-hidden />
+          Podgląd ustawień wydarzenia — zmiany może zapisać tylko administrator.
+        </p>
+      )}
+
       {form?.status === 'ARCHIVED' && (
         <p className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           <Archive className="h-4 w-4 shrink-0" aria-hidden />
@@ -842,384 +898,425 @@ export default function AdminFormEditor() {
       <div className="grid gap-6 lg:grid-cols-[12.5rem_minmax(0,1fr)] lg:gap-8">
         <EditorNav sections={NAV_SECTIONS} />
 
-        <form ref={formRef} onSubmit={onSubmit} className="min-w-0 space-y-6">
-          <EditorCard id="podstawowe" icon={Info} title="Podstawowe informacje">
-            <div>
-              <label className="label" htmlFor="form-title">
-                Tytuł wydarzenia
-              </label>
-              <input
-                id="form-title"
-                className="input"
-                value={draft.title}
-                placeholder="np. Konferencja Syjon 2026"
-                required
-                onChange={(e) => {
-                  const title = e.target.value;
-                  setDraft((d) => ({ ...d, title, slug: isNew && !slugTouched ? slugify(title) : d.slug }));
-                }}
-              />
-            </div>
-
-            <div>
-              <label className="label" htmlFor="form-slug">
-                Adres formularza
-              </label>
-              <div className="flex gap-2">
-                <div className="flex min-w-0 flex-1">
-                  <span className="inline-flex items-center rounded-l-xl border border-r-0 border-slate-200 bg-slate-50 px-3 font-mono text-sm text-slate-500">
-                    /f/
-                  </span>
-                  <input
-                    id="form-slug"
-                    className="input !rounded-l-none font-mono"
-                    value={draft.slug}
-                    required
-                    pattern="[a-z0-9]+(-[a-z0-9]+)*"
-                    title="Małe litery, cyfry i pojedyncze myślniki"
-                    onChange={(e) => {
-                      setSlugTouched(true);
-                      setField('slug', e.target.value);
-                    }}
-                  />
-                </div>
-                {form && (
-                  <IconButton
-                    icon={Copy}
-                    label="Kopiuj link publiczny"
-                    className="h-[42px] w-[42px] rounded-xl"
-                    onClick={() => void copyPublicLink()}
-                  />
-                )}
-              </div>
-              {slugChangedOnPublished ? (
-                <p className="mt-1.5 flex items-center gap-1.5 text-xs text-amber-700">
-                  <TriangleAlert className="h-3.5 w-3.5" aria-hidden />
-                  Wydarzenie jest opublikowane — zmiana adresu unieważni udostępnione linki.
-                </p>
-              ) : (
-                <p className="mt-1.5 text-xs text-slate-500">
-                  Małe litery, cyfry i myślniki.{isNew && !slugTouched ? ' Tworzy się automatycznie z tytułu.' : ''}
-                </p>
-              )}
-            </div>
-
-            <div>
-              <span className="label">Opis</span>
-              <RichTextEditor value={draft.description} onChange={(html) => setField('description', html)} />
-            </div>
-
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <form ref={formRef} onSubmit={onSubmit} className="min-w-0">
+          {/* Konto "tylko podgląd" widzi wszystkie ustawienia, ale pola są zablokowane. */}
+          <fieldset disabled={!canEdit} className="min-w-0 space-y-6">
+            <EditorCard id="podstawowe" icon={Info} title="Podstawowe informacje">
               <div>
-                <label className="label" htmlFor="form-event-date">
-                  Data wydarzenia
+                <label className="label" htmlFor="form-title">
+                  Tytuł wydarzenia
                 </label>
                 <input
-                  id="form-event-date"
-                  type="date"
+                  id="form-title"
                   className="input"
-                  value={draft.eventDate}
+                  value={draft.title}
+                  placeholder="np. Konferencja Syjon 2026"
                   required
-                  onChange={(e) => setField('eventDate', e.target.value)}
+                  onChange={(e) => {
+                    const title = e.target.value;
+                    setDraft((d) => ({ ...d, title, slug: isNew && !slugTouched ? slugify(title) : d.slug }));
+                  }}
                 />
               </div>
+
               <div>
-                <label className="label" htmlFor="form-closes">
-                  Zamknięcie zapisów
+                <label className="label" htmlFor="form-slug">
+                  Adres formularza
                 </label>
-                <input
-                  id="form-closes"
-                  type="date"
-                  className="input"
-                  value={draft.closesAt}
-                  max={draft.eventDate || undefined}
-                  required
-                  aria-describedby="form-closes-hint"
-                  onChange={(e) => setField('closesAt', e.target.value)}
-                />
-                <p id="form-closes-hint" className="mt-1.5 text-xs text-slate-500">
-                  Zapisy trwają do końca wybranego dnia.
-                </p>
-              </div>
-              <div>
-                <label className="label" htmlFor="form-capacity">
-                  Limit miejsc
-                </label>
-                <input
-                  id="form-capacity"
-                  type="number"
-                  min={1}
-                  className="input"
-                  placeholder="Bez limitu"
-                  value={draft.capacityTotal}
-                  onChange={(e) => setField('capacityTotal', e.target.value)}
-                />
-                <p className="mt-1.5 text-xs text-slate-500">Łącznie dla wszystkich biletów.</p>
-              </div>
-            </div>
-          </EditorCard>
-
-          <EditorCard
-            id="pola"
-            icon={ListChecks}
-            title="Pola formularza"
-            description="Dodatkowe pytania do uczestników, pogrupowane w sekcje."
-          >
-            <SectionBuilder sections={sections} onChange={setSections} />
-          </EditorCard>
-
-          <EditorCard
-            id="bilety"
-            icon={Ticket}
-            title="Bilety"
-            description="Bilet płatny kosztuje minimum 1,00 zł (limit Paynow) albo jest bezpłatny."
-          >
-            <TicketsEditor
-              tickets={tickets}
-              onChange={setTickets}
-              occupancy={occupancy}
-              capacityTotal={form?.capacityTotal ?? null}
-              showErrors={showTicketErrors}
-            />
-          </EditorCard>
-
-          <EditorCard
-            id="rabaty"
-            icon={TicketPercent}
-            title="Kody rabatowe"
-            description="Uczestnik wpisuje kod podczas rejestracji, by dostać tańszy bilet — procentowo lub o stałą kwotę."
-          >
-            <DiscountCodesEditor codes={discountCodes} onChange={setDiscountCodes} showErrors={showDiscountErrors} />
-          </EditorCard>
-
-          <EditorCard
-            id="wyglad"
-            icon={Image}
-            title="Wygląd"
-            description="Grafika w nagłówku strony rejestracji. Bez grafiki wyświetla się gradient marki."
-          >
-            <BackgroundUploader
-              disabled={isNew}
-              desktopUrl={form?.backgroundImageDesktopUrl ?? null}
-              mobileUrl={form?.backgroundImageMobileUrl ?? null}
-              busyVariant={backgroundBusy}
-              onUpload={(variant, file) => void uploadBackground(variant, file)}
-              onRemove={(variant) => void removeBackground(variant)}
-            />
-          </EditorCard>
-
-          <EditorCard
-            id="email"
-            icon={Mail}
-            title="E-mail z potwierdzeniem"
-            description="Wysyłany po rejestracji na bilet bezpłatny lub po opłaceniu biletu. Dane biletu, kod QR i przycisk dodają się automatycznie. Puste pole = tekst domyślny."
-          >
-            <div className="space-y-4">
-              <div>
-                <label className="label" htmlFor="email-title">
-                  Tytuł
-                </label>
-                <input
-                  ref={emailTitleRef}
-                  id="email-title"
-                  className="input"
-                  placeholder="Np. {{imie}}, do zobaczenia!"
-                  value={draft.confirmationEmailTitle}
-                  onFocus={() => (emailTargetRef.current = 'confirmationEmailTitle')}
-                  onChange={(e) => setField('confirmationEmailTitle', e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="label" htmlFor="email-body">
-                  Treść
-                </label>
-                <textarea
-                  ref={emailBodyRef}
-                  id="email-body"
-                  className="input h-32"
-                  placeholder="Np. Cześć {{imie}}! Dziękujemy za rejestrację na {{wydarzenie}}."
-                  value={draft.confirmationEmailBody}
-                  onFocus={() => (emailTargetRef.current = 'confirmationEmailBody')}
-                  onChange={(e) => setField('confirmationEmailBody', e.target.value)}
-                />
-              </div>
-            </div>
-
-            <div className="space-y-3 rounded-xl bg-slate-50 p-4">
-              <p className="flex flex-wrap items-center gap-x-2 text-sm font-medium text-slate-700">
-                <Braces className="h-4 w-4 text-brand-600" aria-hidden />
-                Pola dynamiczne
-                <span className="font-normal text-slate-500">— kliknij, aby wstawić w miejscu kursora</span>
-              </p>
-              <div>
-                <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-slate-400">Dane zgłoszenia</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {EMAIL_BUILTIN_VARIABLES.filter((variable) => !HIDDEN_BUILTIN_VARIABLES.has(variable.name)).map(
-                    (variable) => (
-                      <VariableChip key={variable.name} name={variable.name} label={variable.label} onInsert={insertEmailVariable} />
-                    ),
+                <div className="flex gap-2">
+                  <div className="flex min-w-0 flex-1">
+                    <span className="inline-flex items-center rounded-l-xl border border-r-0 border-slate-200 bg-slate-50 px-3 font-mono text-sm text-slate-500">
+                      /f/
+                    </span>
+                    <input
+                      id="form-slug"
+                      className="input !rounded-l-none font-mono"
+                      value={draft.slug}
+                      required
+                      pattern="[a-z0-9]+(-[a-z0-9]+)*"
+                      title="Małe litery, cyfry i pojedyncze myślniki"
+                      onChange={(e) => {
+                        setSlugTouched(true);
+                        setField('slug', e.target.value);
+                      }}
+                    />
+                  </div>
+                  {form && (
+                    <IconButton
+                      icon={Copy}
+                      label="Kopiuj link publiczny"
+                      className="h-[42px] w-[42px] rounded-xl"
+                      onClick={() => void copyPublicLink()}
+                    />
                   )}
                 </div>
+                {slugChangedOnPublished ? (
+                  <p className="mt-1.5 flex items-center gap-1.5 text-xs text-amber-700">
+                    <TriangleAlert className="h-3.5 w-3.5" aria-hidden />
+                    Wydarzenie jest opublikowane — zmiana adresu unieważni udostępnione linki.
+                  </p>
+                ) : (
+                  <p className="mt-1.5 text-xs text-slate-500">
+                    Małe litery, cyfry i myślniki.{isNew && !slugTouched ? ' Tworzy się automatycznie z tytułu.' : ''}
+                  </p>
+                )}
               </div>
-              {fieldVariables.length > 0 && (
+
+              <div>
+                <span className="label">Opis</span>
+                <RichTextEditor
+                  value={draft.description}
+                  readOnly={!canEdit}
+                  onChange={(html) => setField('description', html)}
+                />
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <div>
-                  <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-slate-400">Pola formularza</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {fieldVariables.map((variable) => (
-                      <VariableChip key={variable.name} name={variable.name} label={variable.label} onInsert={insertEmailVariable} />
-                    ))}
-                  </div>
+                  <label className="label" htmlFor="form-event-date">
+                    Data wydarzenia
+                  </label>
+                  <input
+                    id="form-event-date"
+                    type="date"
+                    className="input"
+                    value={draft.eventDate}
+                    required
+                    onChange={(e) => setField('eventDate', e.target.value)}
+                  />
                 </div>
-              )}
-              <p className="text-xs text-slate-500">
-                Wielkość liter i polskie znaki nie mają znaczenia — <code className="font-mono">{'{{imię}}'}</code> działa tak
-                samo jak <code className="font-mono">{'{{imie}}'}</code>. Pole bez odpowiedzi zostaje puste.
-              </p>
-              {unknownEmailVariables.length > 0 && (
-                <p className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                  <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
-                  <span>
-                    Nieznane pola:{' '}
-                    {unknownEmailVariables.map((name) => (
-                      <code key={name} className="mr-1 font-mono">{`{{${name}}}`}</code>
-                    ))}
-                    — w wysłanym e-mailu będą puste. Sprawdź pisownię lub wybierz pole z listy.
-                  </span>
+                <div>
+                  <label className="label" htmlFor="form-closes">
+                    Zamknięcie zapisów
+                  </label>
+                  <input
+                    id="form-closes"
+                    type="date"
+                    className="input"
+                    value={draft.closesAt}
+                    max={draft.eventDate || undefined}
+                    required
+                    aria-describedby="form-closes-hint"
+                    onChange={(e) => setField('closesAt', e.target.value)}
+                  />
+                  <p id="form-closes-hint" className="mt-1.5 text-xs text-slate-500">
+                    Zapisy trwają do końca wybranego dnia.
+                  </p>
+                </div>
+                <div>
+                  <label className="label" htmlFor="form-capacity">
+                    Limit miejsc
+                  </label>
+                  <input
+                    id="form-capacity"
+                    type="number"
+                    min={1}
+                    className="input"
+                    placeholder="Bez limitu"
+                    value={draft.capacityTotal}
+                    onChange={(e) => setField('capacityTotal', e.target.value)}
+                  />
+                  <p className="mt-1.5 text-xs text-slate-500">Łącznie dla wszystkich biletów.</p>
+                </div>
+              </div>
+
+              <div>
+                <label className="label" htmlFor="form-location">
+                  Miejsce
+                </label>
+                <div className="relative">
+                  <MapPin
+                    className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                    aria-hidden
+                  />
+                  <input
+                    id="form-location"
+                    className="input pl-10"
+                    maxLength={300}
+                    placeholder="np. Dom rekolekcyjny, ul. Leśna 5, 05-080 Laski"
+                    value={draft.location}
+                    onChange={(e) => setField('location', e.target.value)}
+                  />
+                </div>
+                <p className="mt-1.5 text-xs text-slate-500">
+                  Pokazujemy je na stronie wydarzenia z linkiem do mapy, w e-mailu i w pliku kalendarza.
                 </p>
-              )}
-            </div>
-          </EditorCard>
+              </div>
+            </EditorCard>
 
-          <EditorCard
-            id="zaawansowane"
-            icon={Code}
-            title="Zaawansowane"
-            description="Strona po płatności i własny kod JS formularza."
-            collapsible
-            defaultOpen={false}
-          >
-            <div className="space-y-2">
-              <p className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                <CreditCard className="h-4 w-4" aria-hidden />
-                Strona po płatności
-              </p>
-              <p className="text-xs text-slate-500">Co zobaczy uczestnik po powrocie z Paynow. Puste pole = tekst domyślny.</p>
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50/40 p-4">
-                  <p className="flex items-center gap-2 text-sm font-medium text-emerald-800">
-                    <CircleCheck className="h-4 w-4" aria-hidden />
-                    Płatność się powiodła
-                  </p>
-                  <div>
-                    <label className="label" htmlFor="success-title">
-                      Tytuł
-                    </label>
-                    <input
-                      id="success-title"
-                      className="input"
-                      placeholder="Rejestracja potwierdzona"
-                      value={draft.paymentSuccessTitle}
-                      onChange={(e) => setField('paymentSuccessTitle', e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <label className="label" htmlFor="success-body">
-                      Treść
-                    </label>
-                    <textarea
-                      id="success-body"
-                      className="input h-24"
-                      placeholder="Np. Bilet wyślemy mailem. Do zobaczenia!"
-                      value={draft.paymentSuccessBody}
-                      onChange={(e) => setField('paymentSuccessBody', e.target.value)}
-                    />
+            <EditorCard
+              id="pola"
+              icon={ListChecks}
+              title="Pola formularza"
+              description="Dodatkowe pytania do uczestników, pogrupowane w sekcje."
+            >
+              <SectionBuilder sections={sections} onChange={setSections} />
+            </EditorCard>
+
+            <EditorCard
+              id="bilety"
+              icon={Ticket}
+              title="Bilety"
+              description="Bilet płatny kosztuje minimum 1,00 zł (limit Paynow) albo jest bezpłatny."
+            >
+              <TicketsEditor
+                tickets={tickets}
+                onChange={setTickets}
+                occupancy={occupancy}
+                capacityTotal={form?.capacityTotal ?? null}
+                showErrors={showTicketErrors}
+              />
+            </EditorCard>
+
+            <EditorCard
+              id="rabaty"
+              icon={TicketPercent}
+              title="Kody rabatowe"
+              description="Uczestnik wpisuje kod podczas rejestracji, by dostać tańszy bilet — procentowo lub o stałą kwotę."
+            >
+              <DiscountCodesEditor codes={discountCodes} onChange={setDiscountCodes} showErrors={showDiscountErrors} />
+            </EditorCard>
+
+            <EditorCard
+              id="zgody"
+              icon={ShieldCheck}
+              title="Zgody dodatkowe"
+              description="Np. zgoda na wizerunek albo na informacje o kolejnych wydarzeniach. Pokazujemy je obok regulaminu, a treść zapisujemy w każdym zgłoszeniu."
+            >
+              <ConsentsEditor consents={consents} onChange={setConsents} />
+            </EditorCard>
+
+            <EditorCard
+              id="wyglad"
+              icon={Image}
+              title="Wygląd"
+              description="Grafika w nagłówku strony rejestracji. Bez grafiki wyświetla się gradient marki."
+            >
+              <BackgroundUploader
+                disabled={isNew || !canEdit}
+                desktopUrl={form?.backgroundImageDesktopUrl ?? null}
+                mobileUrl={form?.backgroundImageMobileUrl ?? null}
+                busyVariant={backgroundBusy}
+                onUpload={(variant, file) => void uploadBackground(variant, file)}
+                onRemove={(variant) => void removeBackground(variant)}
+              />
+            </EditorCard>
+
+            <EditorCard
+              id="email"
+              icon={Mail}
+              title="E-mail z potwierdzeniem"
+              description="Wysyłany po rejestracji na bilet bezpłatny lub po opłaceniu biletu. Dane biletu, kod QR i przycisk dodają się automatycznie. Puste pole = tekst domyślny."
+            >
+              <div className="space-y-4">
+                <div>
+                  <label className="label" htmlFor="email-title">
+                    Tytuł
+                  </label>
+                  <input
+                    ref={emailTitleRef}
+                    id="email-title"
+                    className="input"
+                    placeholder="Np. {{imie}}, do zobaczenia!"
+                    value={draft.confirmationEmailTitle}
+                    onFocus={() => (emailTargetRef.current = 'confirmationEmailTitle')}
+                    onChange={(e) => setField('confirmationEmailTitle', e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="label" htmlFor="email-body">
+                    Treść
+                  </label>
+                  <textarea
+                    ref={emailBodyRef}
+                    id="email-body"
+                    className="input h-32"
+                    placeholder="Np. Cześć {{imie}}! Dziękujemy za rejestrację na {{wydarzenie}}."
+                    value={draft.confirmationEmailBody}
+                    onFocus={() => (emailTargetRef.current = 'confirmationEmailBody')}
+                    onChange={(e) => setField('confirmationEmailBody', e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-3 rounded-xl bg-slate-50 p-4">
+                <p className="flex flex-wrap items-center gap-x-2 text-sm font-medium text-slate-700">
+                  <Braces className="h-4 w-4 text-brand-600" aria-hidden />
+                  Pola dynamiczne
+                  <span className="font-normal text-slate-500">— kliknij, aby wstawić w miejscu kursora</span>
+                </p>
+                <div>
+                  <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-slate-400">Dane zgłoszenia</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {EMAIL_BUILTIN_VARIABLES.filter((variable) => !HIDDEN_BUILTIN_VARIABLES.has(variable.name)).map(
+                      (variable) => (
+                        <VariableChip key={variable.name} name={variable.name} label={variable.label} onInsert={insertEmailVariable} />
+                      ),
+                    )}
                   </div>
                 </div>
-
-                <div className="space-y-3 rounded-xl border border-red-200 bg-red-50/40 p-4">
-                  <p className="flex items-center gap-2 text-sm font-medium text-red-800">
-                    <CircleX className="h-4 w-4" aria-hidden />
-                    Płatność nieudana lub przerwana
-                  </p>
+                {fieldVariables.length > 0 && (
                   <div>
-                    <label className="label" htmlFor="error-title">
-                      Tytuł
-                    </label>
-                    <input
-                      id="error-title"
-                      className="input"
-                      placeholder="Płatność nie została zakończona"
-                      value={draft.paymentErrorTitle}
-                      onChange={(e) => setField('paymentErrorTitle', e.target.value)}
-                    />
+                    <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-slate-400">Pola formularza</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {fieldVariables.map((variable) => (
+                        <VariableChip key={variable.name} name={variable.name} label={variable.label} onInsert={insertEmailVariable} />
+                      ))}
+                    </div>
                   </div>
-                  <div>
-                    <label className="label" htmlFor="error-body">
-                      Treść
-                    </label>
-                    <textarea
-                      id="error-body"
-                      className="input h-24"
-                      placeholder="Np. Spróbuj ponownie albo napisz do nas na kontakt@…"
-                      value={draft.paymentErrorBody}
-                      onChange={(e) => setField('paymentErrorBody', e.target.value)}
-                    />
+                )}
+                <p className="text-xs text-slate-500">
+                  Wielkość liter i polskie znaki nie mają znaczenia — <code className="font-mono">{'{{imię}}'}</code> działa tak
+                  samo jak <code className="font-mono">{'{{imie}}'}</code>. Pole bez odpowiedzi zostaje puste.
+                </p>
+                {unknownEmailVariables.length > 0 && (
+                  <p className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+                    <span>
+                      Nieznane pola:{' '}
+                      {unknownEmailVariables.map((name) => (
+                        <code key={name} className="mr-1 font-mono">{`{{${name}}}`}</code>
+                      ))}
+                      — w wysłanym e-mailu będą puste. Sprawdź pisownię lub wybierz pole z listy.
+                    </span>
+                  </p>
+                )}
+              </div>
+            </EditorCard>
+
+            <EditorCard
+              id="zaawansowane"
+              icon={Code}
+              title="Zaawansowane"
+              description="Strona po płatności i własny kod JS formularza."
+              collapsible
+              defaultOpen={false}
+            >
+              <div className="space-y-2">
+                <p className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                  <CreditCard className="h-4 w-4" aria-hidden />
+                  Strona po płatności
+                </p>
+                <p className="text-xs text-slate-500">Co zobaczy uczestnik po powrocie z Paynow. Puste pole = tekst domyślny.</p>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50/40 p-4">
+                    <p className="flex items-center gap-2 text-sm font-medium text-emerald-800">
+                      <CircleCheck className="h-4 w-4" aria-hidden />
+                      Płatność się powiodła
+                    </p>
+                    <div>
+                      <label className="label" htmlFor="success-title">
+                        Tytuł
+                      </label>
+                      <input
+                        id="success-title"
+                        className="input"
+                        placeholder="Rejestracja potwierdzona"
+                        value={draft.paymentSuccessTitle}
+                        onChange={(e) => setField('paymentSuccessTitle', e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label className="label" htmlFor="success-body">
+                        Treść
+                      </label>
+                      <textarea
+                        id="success-body"
+                        className="input h-24"
+                        placeholder="Np. Bilet wyślemy mailem. Do zobaczenia!"
+                        value={draft.paymentSuccessBody}
+                        onChange={(e) => setField('paymentSuccessBody', e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 rounded-xl border border-red-200 bg-red-50/40 p-4">
+                    <p className="flex items-center gap-2 text-sm font-medium text-red-800">
+                      <CircleX className="h-4 w-4" aria-hidden />
+                      Płatność nieudana lub przerwana
+                    </p>
+                    <div>
+                      <label className="label" htmlFor="error-title">
+                        Tytuł
+                      </label>
+                      <input
+                        id="error-title"
+                        className="input"
+                        placeholder="Płatność nie została zakończona"
+                        value={draft.paymentErrorTitle}
+                        onChange={(e) => setField('paymentErrorTitle', e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label className="label" htmlFor="error-body">
+                        Treść
+                      </label>
+                      <textarea
+                        id="error-body"
+                        className="input h-24"
+                        placeholder="Np. Spróbuj ponownie albo napisz do nas na kontakt@…"
+                        value={draft.paymentErrorBody}
+                        onChange={(e) => setField('paymentErrorBody', e.target.value)}
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
 
-            <div>
-              <label className="label" htmlFor="custom-script">
-                Własny kod JS
-              </label>
-              <textarea
-                id="custom-script"
-                className="input h-32 font-mono text-xs"
-                spellCheck={false}
-                placeholder={"document.querySelector('[data-field-key=\"...\"]').style.display = 'none';"}
-                value={customScript}
-                onChange={(e) => setCustomScript(e.target.value)}
-              />
-              <p className="mt-1.5 text-xs text-slate-500">
-                Wykonuje się na stronie publicznego formularza (np. ukrywanie sekcji). Uczestnik nie widzi tego pola.
-              </p>
-            </div>
-          </EditorCard>
+              <div>
+                <label className="label" htmlFor="custom-script">
+                  Własny kod JS
+                </label>
+                <textarea
+                  id="custom-script"
+                  className="input h-32 font-mono text-xs"
+                  spellCheck={false}
+                  placeholder={"document.querySelector('[data-field-key=\"...\"]').style.display = 'none';"}
+                  value={customScript}
+                  onChange={(e) => setCustomScript(e.target.value)}
+                />
+                <p className="mt-1.5 text-xs text-slate-500">
+                  Wykonuje się na stronie publicznego formularza (np. ukrywanie sekcji). Uczestnik nie widzi tego pola.
+                </p>
+              </div>
+            </EditorCard>
+          </fieldset>
 
-          <div className="sticky bottom-4 z-10 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200/80 bg-white/95 py-3 pl-4 pr-3 shadow-card backdrop-blur">
-            <span
-              aria-live="polite"
-              className={`inline-flex items-center gap-2 text-sm ${dirty ? 'text-amber-700' : 'text-slate-500'}`}
-            >
-              {busy ? (
-                <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden />
-              ) : (
-                <span className={`h-2 w-2 rounded-full ${dirty ? 'bg-amber-500' : 'bg-emerald-500'}`} />
-              )}
-              {busy
-                ? 'Zapisywanie…'
-                : dirty
-                  ? 'Niezapisane zmiany'
-                  : isNew
-                    ? 'Uzupełnij dane wydarzenia'
-                    : 'Wszystkie zmiany zapisane'}
-            </span>
-            <div className="flex items-center gap-2">
-              <kbd className="hidden rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-sans text-xs text-slate-400 sm:inline">
-                {IS_MAC ? '⌘S' : 'Ctrl+S'}
-              </kbd>
-              {dirty && form && (
-                <button type="button" className="btn-ghost" onClick={() => void discardChanges()} disabled={busy}>
-                  Odrzuć zmiany
+          {canEdit && (
+            <div className="sticky bottom-4 z-10 mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200/80 bg-white/95 py-3 pl-4 pr-3 shadow-card backdrop-blur">
+              <span
+                aria-live="polite"
+                className={`inline-flex items-center gap-2 text-sm ${dirty ? 'text-amber-700' : 'text-slate-500'}`}
+              >
+                {busy ? (
+                  <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden />
+                ) : (
+                  <span className={`h-2 w-2 rounded-full ${dirty ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+                )}
+                {busy
+                  ? 'Zapisywanie…'
+                  : dirty
+                    ? 'Niezapisane zmiany'
+                    : isNew
+                      ? 'Uzupełnij dane wydarzenia'
+                      : 'Wszystkie zmiany zapisane'}
+              </span>
+              <div className="flex items-center gap-2">
+                <kbd className="hidden rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-sans text-xs text-slate-400 sm:inline">
+                  {IS_MAC ? '⌘S' : 'Ctrl+S'}
+                </kbd>
+                {dirty && form && (
+                  <button type="button" className="btn-ghost" onClick={() => void discardChanges()} disabled={busy}>
+                    Odrzuć zmiany
+                  </button>
+                )}
+                <button type="submit" className="btn-primary" disabled={busy || (!dirty && !isNew)}>
+                  <Save className="h-4 w-4" aria-hidden />
+                  {isNew ? 'Utwórz wydarzenie' : 'Zapisz'}
                 </button>
-              )}
-              <button type="submit" className="btn-primary" disabled={busy || (!dirty && !isNew)}>
-                <Save className="h-4 w-4" aria-hidden />
-                {isNew ? 'Utwórz wydarzenie' : 'Zapisz'}
-              </button>
+              </div>
             </div>
-          </div>
+          )}
         </form>
       </div>
     </section>

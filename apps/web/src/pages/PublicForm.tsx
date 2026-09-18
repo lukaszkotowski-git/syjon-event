@@ -8,6 +8,7 @@ import {
   ChevronRight,
   CircleCheck,
   ClipboardCheck,
+  ExternalLink,
   ListChecks,
   Lock,
   Mail,
@@ -25,6 +26,7 @@ import {
   buildAnswersSchema,
   buyerSchema,
   flattenSections,
+  visibleFields,
   type CreateSubmissionResponse,
   type DiscountCodeCheckResponse,
   type FieldDefinition,
@@ -135,6 +137,9 @@ const RequiredMark = () => (
   </span>
 );
 
+/** Link do mapy z adresu wpisanego przez organizatora. */
+const mapUrl = (location: string) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}`;
+
 const legalLinkClass = 'font-medium text-brand-700 underline decoration-brand-300 underline-offset-2 hover:text-brand-900';
 
 export default function PublicForm() {
@@ -146,6 +151,7 @@ export default function PublicForm() {
   const [buyer, setBuyer] = useState({ email: '', phone: '', address: '' });
   const [answers, setAnswers] = useState<Answers>({});
   const [legal, setLegal] = useState({ terms: false, privacy: false });
+  const [consentAnswers, setConsentAnswers] = useState<Record<string, boolean>>({});
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [buyerErrors, setBuyerErrors] = useState<Record<string, string>>({});
   const [ticketError, setTicketError] = useState<string | null>(null);
@@ -180,6 +186,15 @@ export default function PublicForm() {
     if (form) saveDraft(form.slug, { ticketTypeId, buyer, answers });
   }, [form, ticketTypeId, buyer, answers]);
 
+  useEffect(() => {
+    if (!form) return;
+    const previous = document.title;
+    document.title = `${form.title} — Syjon Event`;
+    return () => {
+      document.title = previous;
+    };
+  }, [form]);
+
   // Własny kod JS admina (np. ukrywanie sekcji w zależności od kontekstu). Konfigurowany
   // w panelu admina, nigdy nie renderowany jako widoczne pole formularza — uruchamiamy go
   // tylko raz, po załadowaniu formularza, jako prawdziwy <script> (nie działa przez
@@ -199,7 +214,11 @@ export default function PublicForm() {
     () => ((form?.schemaJson.sections as FormSection[] | undefined) ?? []).filter((s) => s.fields.length > 0),
     [form],
   );
-  const fields = useMemo(() => flattenSections(sections), [sections]);
+  const allFields = useMemo(() => flattenSections(sections), [sections]);
+  // Pola warunkowe pokazujemy dopiero, gdy wcześniejsza odpowiedź je odsłoni.
+  const fields = useMemo(() => visibleFields(allFields, answers), [allFields, answers]);
+  const visibleKeys = useMemo(() => new Set(fields.map((f) => f.key)), [fields]);
+  const consentDefinitions = form?.schemaJson.consents ?? [];
   const hasCustomFields = sections.length > 0;
 
   const steps: StepConfig[] = useMemo(() => {
@@ -366,6 +385,12 @@ export default function PublicForm() {
       focusFirstError();
       return;
     }
+    const missingConsent = consentDefinitions.find((c) => c.required && !consentAnswers[c.key]);
+    if (missingConsent) {
+      setLegalError(`Zaznacz wymaganą zgodę: ${missingConsent.label}`);
+      focusFirstError();
+      return;
+    }
 
     setBusy(true);
     try {
@@ -373,6 +398,7 @@ export default function PublicForm() {
         ticketTypeId,
         buyer: { email: buyer.email, phone: buyer.phone || null, address: buyer.address || null },
         answers: fieldsResult.data,
+        consents: consentAnswers,
         discountCode: appliedDiscount?.code,
         acceptTerms: legal.terms,
         acceptPrivacy: legal.privacy,
@@ -499,6 +525,26 @@ export default function PublicForm() {
               </div>
             </div>
           )}
+          {form.location && (
+            <div className="flex items-start gap-2.5 sm:col-span-3">
+              <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-brand-600" aria-hidden />
+              <div className="min-w-0">
+                <dt className="text-xs text-slate-500">Miejsce</dt>
+                <dd className="font-medium text-slate-900">
+                  {form.location}{' '}
+                  <a
+                    href={mapUrl(form.location)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="ml-1 inline-flex items-center gap-1 whitespace-nowrap text-sm font-medium text-brand-700 underline decoration-brand-300 underline-offset-2 hover:text-brand-900"
+                  >
+                    Pokaż na mapie
+                    <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+                  </a>
+                </dd>
+              </div>
+            </div>
+          )}
         </dl>
 
         {/* O wydarzeniu — akordeon, domyślnie rozwinięty; formularz jest od razu pod nim. */}
@@ -558,92 +604,95 @@ export default function PublicForm() {
                     title="Formularz rejestracyjny"
                     subtitle="Organizator prosi o uzupełnienie poniższych pól. Pola z * są wymagane."
                   />
-                  {sections.map((section) => (
-                    <div key={section.id} className="space-y-4">
-                      <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{section.name}</h3>
-                      {section.fields.map((field) => {
-                        const hasError = Boolean(fieldErrors[field.key]);
-                        const inputId = `field-${field.key}`;
-                        const errorId = `${inputId}-error`;
-                        const a11y = {
-                          'aria-invalid': hasError || undefined,
-                          'aria-required': field.required || undefined,
-                          'aria-describedby': hasError ? errorId : undefined,
-                        };
-                        return (
-                          <div key={field.key} data-field-key={field.key}>
-                            {field.type === 'checkbox' ? (
-                              <label className={`flex items-start gap-2 text-sm ${hasError ? 'text-red-700' : ''}`}>
-                                <input
-                                  type="checkbox"
-                                  {...a11y}
-                                  className="mt-0.5 h-4 w-4 rounded border-slate-300 accent-brand-600 focus:ring-brand-200"
-                                  checked={Boolean(answers[field.key])}
-                                  onChange={(e) => setAnswers({ ...answers, [field.key]: e.target.checked })}
-                                />
-                                <span>
-                                  {field.label}
-                                  {field.required && <RequiredMark />}
-                                </span>
-                              </label>
-                            ) : (
-                              <>
-                                <label className={`label ${hasError ? 'text-red-700' : ''}`} htmlFor={inputId}>
-                                  {field.label}
-                                  {field.required && <RequiredMark />}
-                                </label>
-                                {field.type === 'select' ? (
-                                  <select
-                                    id={inputId}
-                                    {...a11y}
-                                    className={`input ${hasError ? 'input-error' : ''}`}
-                                    value={String(answers[field.key] ?? '')}
-                                    onChange={(e) => setAnswers({ ...answers, [field.key]: e.target.value })}
-                                  >
-                                    <option value="">— wybierz —</option>
-                                    {field.options.map((option) => (
-                                      <option key={option} value={option}>
-                                        {option}
-                                      </option>
-                                    ))}
-                                  </select>
-                                ) : (
+                  {sections
+                    .map((section) => ({ ...section, fields: section.fields.filter((f) => visibleKeys.has(f.key)) }))
+                    .filter((section) => section.fields.length > 0)
+                    .map((section) => (
+                      <div key={section.id} className="space-y-4">
+                        <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{section.name}</h3>
+                        {section.fields.map((field) => {
+                          const hasError = Boolean(fieldErrors[field.key]);
+                          const inputId = `field-${field.key}`;
+                          const errorId = `${inputId}-error`;
+                          const a11y = {
+                            'aria-invalid': hasError || undefined,
+                            'aria-required': field.required || undefined,
+                            'aria-describedby': hasError ? errorId : undefined,
+                          };
+                          return (
+                            <div key={field.key} data-field-key={field.key}>
+                              {field.type === 'checkbox' ? (
+                                <label className={`flex items-start gap-2 text-sm ${hasError ? 'text-red-700' : ''}`}>
                                   <input
-                                    id={inputId}
+                                    type="checkbox"
                                     {...a11y}
-                                    className={`input ${hasError ? 'input-error' : ''}`}
-                                    type={
-                                      field.type === 'number'
-                                        ? 'number'
-                                        : field.type === 'date'
-                                          ? 'date'
-                                          : field.type === 'tel'
-                                            ? 'tel'
-                                            : 'text'
-                                    }
-                                    placeholder={field.type === 'tel' ? '+48 601 234 567' : undefined}
-                                    value={String(answers[field.key] ?? '')}
-                                    onChange={(e) =>
-                                      setAnswers({
-                                        ...answers,
-                                        [field.key]:
-                                          field.type === 'tel' ? formatPlPhoneInput(e.target.value) : e.target.value,
-                                      })
-                                    }
+                                    className="mt-0.5 h-4 w-4 rounded border-slate-300 accent-brand-600 focus:ring-brand-200"
+                                    checked={Boolean(answers[field.key])}
+                                    onChange={(e) => setAnswers({ ...answers, [field.key]: e.target.checked })}
                                   />
-                                )}
-                              </>
-                            )}
-                            {hasError && (
-                              <p id={errorId} className="mt-1 text-xs text-red-600">
-                                {fieldErrors[field.key]}
-                              </p>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ))}
+                                  <span>
+                                    {field.label}
+                                    {field.required && <RequiredMark />}
+                                  </span>
+                                </label>
+                              ) : (
+                                <>
+                                  <label className={`label ${hasError ? 'text-red-700' : ''}`} htmlFor={inputId}>
+                                    {field.label}
+                                    {field.required && <RequiredMark />}
+                                  </label>
+                                  {field.type === 'select' ? (
+                                    <select
+                                      id={inputId}
+                                      {...a11y}
+                                      className={`input ${hasError ? 'input-error' : ''}`}
+                                      value={String(answers[field.key] ?? '')}
+                                      onChange={(e) => setAnswers({ ...answers, [field.key]: e.target.value })}
+                                    >
+                                      <option value="">— wybierz —</option>
+                                      {field.options.map((option) => (
+                                        <option key={option} value={option}>
+                                          {option}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  ) : (
+                                    <input
+                                      id={inputId}
+                                      {...a11y}
+                                      className={`input ${hasError ? 'input-error' : ''}`}
+                                      type={
+                                        field.type === 'number'
+                                          ? 'number'
+                                          : field.type === 'date'
+                                            ? 'date'
+                                            : field.type === 'tel'
+                                              ? 'tel'
+                                              : 'text'
+                                      }
+                                      placeholder={field.type === 'tel' ? '+48 601 234 567' : undefined}
+                                      value={String(answers[field.key] ?? '')}
+                                      onChange={(e) =>
+                                        setAnswers({
+                                          ...answers,
+                                          [field.key]:
+                                            field.type === 'tel' ? formatPlPhoneInput(e.target.value) : e.target.value,
+                                        })
+                                      }
+                                    />
+                                  )}
+                                </>
+                              )}
+                              {hasError && (
+                                <p id={errorId} className="mt-1 text-xs text-red-600">
+                                  {fieldErrors[field.key]}
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ))}
                 </section>
               )}
 
@@ -1000,6 +1049,31 @@ export default function PublicForm() {
                         <RequiredMark />
                       </span>
                     </label>
+                    {consentDefinitions.map((consent) => (
+                      <label key={consent.key} className="flex items-start gap-2">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4 rounded border-slate-300 accent-brand-600 focus:ring-brand-200"
+                          aria-invalid={(Boolean(legalError) && consent.required && !consentAnswers[consent.key]) || undefined}
+                          aria-required={consent.required || undefined}
+                          aria-describedby={legalError ? 'legal-error' : undefined}
+                          checked={Boolean(consentAnswers[consent.key])}
+                          onChange={(e) => setConsentAnswers({ ...consentAnswers, [consent.key]: e.target.checked })}
+                        />
+                        <span>
+                          {consent.label}
+                          {consent.url && (
+                            <>
+                              {' '}
+                              <a href={consent.url} target="_blank" rel="noopener noreferrer" className={legalLinkClass}>
+                                (szczegóły)
+                              </a>
+                            </>
+                          )}
+                          {consent.required ? <RequiredMark /> : <span className="text-slate-400"> (opcjonalnie)</span>}
+                        </span>
+                      </label>
+                    ))}
                     {legalError && (
                       <p id="legal-error" className="text-xs text-red-600">
                         {legalError}

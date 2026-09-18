@@ -20,6 +20,7 @@ import {
 import { asyncHandler } from '../http/async-handler.js';
 import { badRequest, conflict, notFound } from '../http/errors.js';
 import { prisma } from '../prisma.js';
+import { audit } from '../services/audit.js';
 import { checkInStats } from '../services/check-in.js';
 import { guessDisplayName } from '../services/participants.js';
 import { reissueTicketNonce, sendTicketEmail } from '../services/tickets.js';
@@ -109,6 +110,7 @@ adminAttendanceRouter.post(
         pinHash: await bcrypt.hash(pin, PIN_HASH_ROUNDS),
       },
     });
+    await audit(req, { action: 'station.create', formId: form.id, entityId: station.id, summary: `Dodano stanowisko skanowania „${name}”` });
     const dto: StationCredentialsDto = { station: toStationDto(station, 0), pin };
     res.status(201).json(dto);
   }),
@@ -128,6 +130,17 @@ adminAttendanceRouter.patch(
       },
     });
     if (body.isActive === false) await revokeAllStationSessions(station.id);
+    await audit(req, {
+      action: 'station.update',
+      formId: form.id,
+      entityId: station.id,
+      summary:
+        body.isActive === false
+          ? `Wyłączono stanowisko „${updated.name}”`
+          : body.isActive === true
+            ? `Włączono stanowisko „${updated.name}”`
+            : `Zmieniono stanowisko „${updated.name}”`,
+    });
     const checkInCount = await prisma.submission.count({ where: { checkedInStationId: station.id } });
     res.json({ station: toStationDto(updated, checkInCount) });
   }),
@@ -150,6 +163,7 @@ adminAttendanceRouter.post(
       },
     });
     await revokeAllStationSessions(station.id);
+    await audit(req, { action: 'station.reset', formId: form.id, entityId: station.id, summary: `Nowy PIN i link dla stanowiska „${station.name}”` });
     const checkInCount = await prisma.submission.count({ where: { checkedInStationId: station.id } });
     const dto: StationCredentialsDto = { station: toStationDto(updated, checkInCount), pin };
     res.json(dto);
@@ -186,6 +200,7 @@ adminAttendanceRouter.post(
     if (submission.status !== 'PAID') throw conflict('Bilet można wysłać tylko dla opłaconego zgłoszenia', 'NOT_PAID');
     const sent = await sendTicketEmail(submission.id, { reissued: false });
     if (!sent) throw conflict('Nie udało się wysłać e-maila — sprawdź konfigurację SMTP', 'MAIL_FAILED');
+    await audit(req, { action: 'ticket.resend', formId: form.id, entityId: submission.id, summary: `Wysłano ponownie bilet ${ticketReference(submission.id)} na ${submission.buyerEmail}` });
     res.json({ ok: true });
   }),
 );
@@ -201,6 +216,7 @@ adminAttendanceRouter.post(
     const nonce = await reissueTicketNonce(submission.id);
     if (!nonce) throw conflict('Nowy kod można wystawić tylko dla opłaconego zgłoszenia', 'NOT_PAID');
     const sent = await sendTicketEmail(submission.id, { reissued: true });
+    await audit(req, { action: 'ticket.reissue', formId: form.id, entityId: submission.id, summary: `Unieważniono kod QR i wystawiono nowy dla ${ticketReference(submission.id)} (${submission.buyerEmail})` });
     res.json({ ok: true, emailSent: sent });
   }),
 );
@@ -224,6 +240,7 @@ adminAttendanceRouter.post(
       }
       console.info(`[tickets] wysyłka brakujących biletów (${form.slug}): ${pending.length - failed} ok, ${failed} błędów`);
     })();
+    await audit(req, { action: 'ticket.send_missing', formId: form.id, summary: `Wysyłka brakujących biletów (${pending.length})` });
     res.status(202).json({ queued: pending.length });
   }),
 );

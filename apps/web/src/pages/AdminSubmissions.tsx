@@ -8,9 +8,12 @@ import {
   Inbox,
   Info,
   LoaderCircle,
+  Mail,
   MailCheck,
   MailX,
   Pencil,
+  Printer,
+  ShieldCheck,
   QrCode,
   RefreshCw,
   ScanLine,
@@ -21,7 +24,8 @@ import {
   Wallet,
   X,
 } from 'lucide-react';
-import type { FormSection } from '@syjonevent/shared';
+import { flattenSections, visibleFields, type ConsentRecord, type FormSection } from '@syjonevent/shared';
+import { useCanEdit } from '../lib/admin';
 import { api, ApiError, formatDateTime, formatPln } from '../lib/api';
 import { useDebouncedValue } from '../lib/hooks';
 import {
@@ -75,6 +79,7 @@ interface SubmissionDetail {
   status: SubmissionStatus;
   payloadJson: Answers;
   schemaSnapshotJson: { sections: FormSection[] };
+  consentsJson: ConsentRecord[];
   reservationExpiresAt: string | null;
   confirmationEmailSentAt: string | null;
   ticketIssued: boolean;
@@ -106,6 +111,7 @@ export default function AdminSubmissions() {
   const { id } = useParams();
   const toast = useToast();
   const confirm = useConfirm();
+  const canEdit = useCanEdit();
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedId = searchParams.get('zgloszenie');
 
@@ -322,6 +328,14 @@ export default function AdminSubmissions() {
           {formTitle && <p className="truncate text-sm text-slate-500">{formTitle}</p>}
         </div>
         <div className="flex flex-wrap gap-2">
+          <Link to={`/admin/formularze/${id}/wiadomosci`} className="btn-secondary">
+            <Mail className="h-4 w-4" aria-hidden />
+            Wiadomość
+          </Link>
+          <Link to={`/admin/formularze/${id}/raporty`} className="btn-secondary">
+            <Printer className="h-4 w-4" aria-hidden />
+            Raporty
+          </Link>
           <Link to={`/admin/formularze/${id}/obecnosc`} className="btn-secondary">
             <ScanLine className="h-4 w-4" aria-hidden />
             Obecność
@@ -540,7 +554,8 @@ export default function AdminSubmissions() {
         title={detail?.buyerEmail ?? 'Zgłoszenie'}
         subtitle={detail ? `Zgłoszono ${formatDateTime(detail.createdAt)}` : undefined}
         footer={
-          detail && (
+          detail &&
+          canEdit && (
             <div className="flex flex-wrap items-center justify-between gap-3">
               <span className={`inline-flex items-center gap-2 text-sm ${dirty ? 'text-amber-700' : 'text-slate-400'}`}>
                 <span className={`h-2 w-2 rounded-full ${dirty ? 'bg-amber-500' : 'bg-slate-300'}`} />
@@ -576,6 +591,7 @@ export default function AdminSubmissions() {
             onResendTicket={() => void resendTicket()}
             onReissueTicket={() => void reissueTicket()}
             ticketBusy={ticketBusy}
+            readOnly={!canEdit}
           />
         )}
       </Drawer>
@@ -593,6 +609,7 @@ interface DetailBodyProps {
   onResendTicket: () => void;
   onReissueTicket: () => void;
   ticketBusy: boolean;
+  readOnly: boolean;
 }
 
 function SubmissionDetailBody({
@@ -605,9 +622,17 @@ function SubmissionDetailBody({
   onResendTicket,
   onReissueTicket,
   ticketBusy,
+  readOnly,
 }: DetailBodyProps) {
-  const sections = detail.schemaSnapshotJson.sections.filter((section) => section.fields.length > 0);
+  // Pola warunkowe ukryte przy obecnych odpowiedziach nie są pokazywane (i nie zapisałyby się).
+  const visibleKeys = new Set(
+    visibleFields(flattenSections(detail.schemaSnapshotJson.sections), editAnswers).map((field) => field.key),
+  );
+  const sections = detail.schemaSnapshotJson.sections
+    .map((section) => ({ ...section, fields: section.fields.filter((field) => visibleKeys.has(field.key)) }))
+    .filter((section) => section.fields.length > 0);
   const payments = detail.payments ?? [];
+  const consents = detail.consentsJson ?? [];
 
   return (
     <div className="space-y-6">
@@ -677,7 +702,7 @@ function SubmissionDetailBody({
         )}
       </dl>
 
-      {detail.status === 'PAID' && (
+      {detail.status === 'PAID' && !readOnly && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 p-4">
           <div className="flex items-center gap-3">
             <QrCode className="h-5 w-5 text-brand-600" aria-hidden />
@@ -721,110 +746,134 @@ function SubmissionDetailBody({
         </div>
       )}
 
-      <div>
-        <h3 className="mb-3 text-sm font-semibold text-slate-900">Dane kupującego</h3>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div>
-            <label className="label" htmlFor="buyer-email">
-              E-mail
-            </label>
-            <div className="flex gap-1.5">
+      {consents.length > 0 && (
+        <div>
+          <h3 className="mb-2 text-sm font-semibold text-slate-900">Zgody dodatkowe</h3>
+          <ul className="space-y-1.5 rounded-2xl border border-slate-200 p-4 text-sm">
+            {consents.map((consent) => (
+              <li key={consent.key} className="flex items-start gap-2">
+                <ShieldCheck
+                  className={`mt-0.5 h-4 w-4 shrink-0 ${consent.accepted ? 'text-emerald-600' : 'text-slate-300'}`}
+                  aria-hidden
+                />
+                <span className={consent.accepted ? 'text-slate-800' : 'text-slate-400'}>
+                  {consent.label}
+                  <span className="ml-1.5 text-xs">{consent.accepted ? '— zgoda' : '— brak zgody'}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Konto "tylko podgląd" widzi te same pola, ale zablokowane. */}
+      <fieldset disabled={readOnly} className="space-y-6">
+        <div>
+          <h3 className="mb-3 text-sm font-semibold text-slate-900">Dane kupującego</h3>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="label" htmlFor="buyer-email">
+                E-mail
+              </label>
+              <div className="flex gap-1.5">
+                <input
+                  id="buyer-email"
+                  className="input"
+                  type="email"
+                  value={editBuyer.email}
+                  onChange={(e) => setEditBuyer({ ...editBuyer, email: e.target.value })}
+                />
+                <IconButton
+                  icon={Copy}
+                  label="Kopiuj e-mail"
+                  className="h-[42px] w-[42px] shrink-0 rounded-xl"
+                  onClick={() => onCopyEmail(editBuyer.email)}
+                />
+              </div>
+            </div>
+            <div>
+              <label className="label" htmlFor="buyer-phone">
+                Telefon
+              </label>
               <input
-                id="buyer-email"
+                id="buyer-phone"
                 className="input"
-                type="email"
-                value={editBuyer.email}
-                onChange={(e) => setEditBuyer({ ...editBuyer, email: e.target.value })}
+                value={editBuyer.phone}
+                placeholder="—"
+                onChange={(e) => setEditBuyer({ ...editBuyer, phone: e.target.value })}
               />
-              <IconButton
-                icon={Copy}
-                label="Kopiuj e-mail"
-                className="h-[42px] w-[42px] shrink-0 rounded-xl"
-                onClick={() => onCopyEmail(editBuyer.email)}
+            </div>
+            <div className="sm:col-span-2">
+              <label className="label" htmlFor="buyer-address">
+                Adres
+              </label>
+              <input
+                id="buyer-address"
+                className="input"
+                value={editBuyer.address}
+                placeholder="—"
+                onChange={(e) => setEditBuyer({ ...editBuyer, address: e.target.value })}
               />
             </div>
           </div>
-          <div>
-            <label className="label" htmlFor="buyer-phone">
-              Telefon
-            </label>
-            <input
-              id="buyer-phone"
-              className="input"
-              value={editBuyer.phone}
-              placeholder="—"
-              onChange={(e) => setEditBuyer({ ...editBuyer, phone: e.target.value })}
-            />
-          </div>
-          <div className="sm:col-span-2">
-            <label className="label" htmlFor="buyer-address">
-              Adres
-            </label>
-            <input
-              id="buyer-address"
-              className="input"
-              value={editBuyer.address}
-              placeholder="—"
-              onChange={(e) => setEditBuyer({ ...editBuyer, address: e.target.value })}
-            />
-          </div>
         </div>
-      </div>
 
-      {sections.map((section) => (
-        <div key={section.id}>
-          <h3 className="mb-3 text-sm font-semibold text-slate-900">{section.name}</h3>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {section.fields.map((field) => {
-              const inputId = `answer-${field.key}`;
-              return (
-                <div key={field.key}>
-                  {field.type === 'checkbox' ? (
-                    <label className="flex items-center gap-2 pt-1 text-sm text-slate-700">
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4 rounded border-slate-300 accent-brand-600"
-                        checked={Boolean(editAnswers[field.key])}
-                        onChange={(e) => setEditAnswers({ ...editAnswers, [field.key]: e.target.checked })}
-                      />
-                      {field.label}
-                    </label>
-                  ) : (
-                    <>
-                      <label className="label" htmlFor={inputId}>
+        {sections.map((section) => (
+          <div key={section.id}>
+            <h3 className="mb-3 text-sm font-semibold text-slate-900">{section.name}</h3>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {section.fields.map((field) => {
+                const inputId = `answer-${field.key}`;
+                return (
+                  <div key={field.key}>
+                    {field.type === 'checkbox' ? (
+                      <label className="flex items-center gap-2 pt-1 text-sm text-slate-700">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-slate-300 accent-brand-600"
+                          checked={Boolean(editAnswers[field.key])}
+                          onChange={(e) => setEditAnswers({ ...editAnswers, [field.key]: e.target.checked })}
+                        />
                         {field.label}
                       </label>
-                      {field.type === 'select' ? (
-                        <select
-                          id={inputId}
-                          className="input"
-                          value={String(editAnswers[field.key] ?? '')}
-                          onChange={(e) => setEditAnswers({ ...editAnswers, [field.key]: e.target.value })}
-                        >
-                          <option value="">— wybierz —</option>
-                          {field.options.map((option) => (
-                            <option key={option} value={option}>
-                              {option}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <input
-                          id={inputId}
-                          className="input"
-                          type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}
-                          value={String(editAnswers[field.key] ?? '')}
-                          onChange={(e) => setEditAnswers({ ...editAnswers, [field.key]: e.target.value })}
-                        />
-                      )}
-                    </>
-                  )}
-                </div>
-              );
-            })}
+                    ) : (
+                      <>
+                        <label className="label" htmlFor={inputId}>
+                          {field.label}
+                        </label>
+                        {field.type === 'select' ? (
+                          <select
+                            id={inputId}
+                            className="input"
+                            value={String(editAnswers[field.key] ?? '')}
+                            onChange={(e) => setEditAnswers({ ...editAnswers, [field.key]: e.target.value })}
+                          >
+                            <option value="">— wybierz —</option>
+                            {field.options.map((option) => (
+                              <option key={option} value={option}>
+                                {option}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            id={inputId}
+                            className="input"
+                            type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}
+                            value={String(editAnswers[field.key] ?? '')}
+                            onChange={(e) => setEditAnswers({ ...editAnswers, [field.key]: e.target.value })}
+                          />
+                        )}
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        </div>
-      ))}
+        ))}
+
+      </fieldset>
 
       <p className="flex gap-2 rounded-xl bg-slate-50 px-3 py-2.5 text-xs text-slate-500">
         <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />

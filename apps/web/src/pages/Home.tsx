@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, CalendarDays, LogIn, TicketX, X } from 'lucide-react';
+import { ArrowRight, CalendarDays, LogIn, MapPin, TicketX, X } from 'lucide-react';
 import type { PublicEventListItemDto } from '@syjonevent/shared';
 import { api } from '../lib/api';
 import LoginForm from '../components/LoginForm';
@@ -52,6 +52,12 @@ function EventCard({ event, delay = 0 }: { event: PublicEventListItemDto; delay?
 
       <div className="relative p-5">
         <h3 className="font-display text-lg font-semibold text-white">{event.title}</h3>
+        {event.location && (
+          <p className="mt-1 flex items-center gap-1.5 text-xs text-brand-100/90">
+            <MapPin className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            <span className="truncate">{event.location}</span>
+          </p>
+        )}
         {event.summary && <p className="mt-1.5 line-clamp-3 text-sm text-brand-50/90">{event.summary}</p>}
         <p className="mt-3 flex items-center gap-1.5 text-sm font-medium text-white">
           {event.soldOut ? 'Zobacz szczegóły' : 'Zapisz się'}

@@ -18,6 +18,7 @@ import { buildFreeConfirmationEmail, sendMail } from '../services/mailer.js';
 import { ensureTicketNonce, renderTicketQrPng, ticketEmailAttachment } from '../services/tickets.js';
 import { guessDisplayName } from '../services/participants.js';
 import { ticketReference } from '../utils/ticket-code.js';
+import { toSummary } from '../utils/text.js';
 import { prisma } from '../prisma.js';
 import { countOccupancy } from '../services/capacity.js';
 import { confirmationUrl, startPaymentAttempt, syncOpenPayments } from '../services/payments.js';
@@ -39,25 +40,6 @@ const writeLimiter = rateLimit({
 
 export const publicRouter: Router = Router();
 
-const SUMMARY_LENGTH = 160;
-
-/** Opis wydarzenia to HTML z edytora — na kafelku pokazujemy sam tekst. */
-function toSummary(html: string | null): string {
-  if (!html) return '';
-  const text = html
-    // Każdy znacznik zastępujemy spacją, żeby akapity nie posklejały się w jeden wyraz.
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/\s+/g, ' ')
-    .trim();
-  return text.length > SUMMARY_LENGTH ? `${text.slice(0, SUMMARY_LENGTH).trimEnd()}…` : text;
-}
-
 /** Lista wydarzeń z otwartymi zapisami — strona główna dla osoby niezalogowanej. */
 publicRouter.get(
   '/events',
@@ -77,6 +59,7 @@ publicRouter.get(
           summary: toSummary(form.description),
           eventDate: form.eventDate.toISOString(),
           closesAt: form.closesAt.toISOString(),
+          location: form.location,
           imageUrl: form.backgroundImageDesktopUrl ?? form.backgroundImageMobileUrl,
           soldOut: form.capacityTotal !== null && occupancy.total >= form.capacityTotal,
         };
@@ -110,6 +93,7 @@ publicRouter.get(
       description: form.description,
       eventDate: form.eventDate.toISOString(),
       closesAt: form.closesAt.toISOString(),
+      location: form.location,
       termsVersion: form.termsVersion,
       privacyPolicyVersion: form.privacyPolicyVersion,
       schemaJson: parseFormSchema(form.schemaJson),
@@ -183,6 +167,8 @@ publicRouter.post(
         : null;
       const { subject, html, text } = buildFreeConfirmationEmail({
         formTitle: form.title,
+        eventDate: form.eventDate,
+        location: form.location,
         ticketName: submission.ticketNameSnapshot,
         amountCents: submission.ticketPriceCents,
         currency: submission.currency,
@@ -289,6 +275,7 @@ publicRouter.get(
       formTitle: submissionRecord.form.title,
       formSlug: submissionRecord.form.slug,
       eventDate: submissionRecord.form.eventDate.toISOString(),
+      location: submissionRecord.form.location,
       confirmationEmailSent: fresh.confirmationEmailSentAt !== null,
       ticketReference: fresh.status === 'PAID' ? ticketReference(fresh.id) : null,
       checkedInAt: fresh.checkedInAt?.toISOString() ?? null,

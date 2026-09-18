@@ -62,6 +62,8 @@ export interface TicketQrData {
 
 interface TicketEmailData {
   formTitle: string;
+  eventDate?: Date | null;
+  location?: string | null;
   ticketName: string;
   amountCents: number;
   currency: string;
@@ -142,10 +144,51 @@ function shellHtml(title: string, bodyHtml: string): string {
 </html>`;
 }
 
+export function formatEventDate(date: Date): string {
+  return new Intl.DateTimeFormat('pl-PL', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'Europe/Warsaw',
+  }).format(date);
+}
+
+/** Link do mapy z adresu — organizator wpisuje sam tekst, bez szukania współrzędnych. */
+export function mapUrl(location: string): string {
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}`;
+}
+
+function detailRowHtml(label: string, valueHtml: string): string {
+  return `<tr><td style="padding:0 16px;border-top:1px solid #dbf3f5;"></td></tr>
+    <tr><td style="padding:12px 16px 0;font-size:13px;color:#24757a;">${label}</td></tr>
+    <tr><td style="padding:2px 16px 12px;font-size:15px;color:#0d3135;">${valueHtml}</td></tr>`;
+}
+
+function whenWhereHtml(data: TicketEmailData): string {
+  return [
+    data.eventDate ? detailRowHtml('Termin', escapeHtml(formatEventDate(data.eventDate))) : '',
+    data.location
+      ? detailRowHtml(
+          'Miejsce',
+          `${escapeHtml(data.location)} · <a href="${mapUrl(data.location)}" style="color:#24757a;">mapa</a>`,
+        )
+      : '',
+  ].join('');
+}
+
+function whenWhereText(data: TicketEmailData): string[] {
+  return [
+    ...(data.eventDate ? [`Termin: ${formatEventDate(data.eventDate)}`] : []),
+    ...(data.location ? [`Miejsce: ${data.location} (${mapUrl(data.location)})`] : []),
+  ];
+}
+
 function ticketDetailsHtml(data: TicketEmailData): string {
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0;border:1px solid #dbf3f5;border-radius:12px;overflow:hidden;">
     <tr><td style="padding:12px 16px 0;font-size:13px;color:#24757a;">Wydarzenie</td></tr>
     <tr><td style="padding:2px 16px 12px;font-size:15px;font-weight:600;color:#0d3135;">${escapeHtml(data.formTitle)}</td></tr>
+    ${whenWhereHtml(data)}
     <tr><td style="padding:0 16px;border-top:1px solid #dbf3f5;"></td></tr>
     <tr><td style="padding:12px 16px 0;font-size:13px;color:#24757a;">Bilet</td></tr>
     <tr><td style="padding:2px 16px 12px;font-size:15px;color:#0d3135;">${escapeHtml(data.ticketName)} — ${escapeHtml(formatAmount(data.amountCents, data.currency))}</td></tr>
@@ -204,6 +247,7 @@ export function buildFreeConfirmationEmail(data: TicketEmailData & { confirmatio
     '',
     introText(defaultIntro, data.customBody),
     '',
+    ...whenWhereText(data),
     `Bilet: ${data.ticketName} (${formatAmount(data.amountCents, data.currency)})`,
     ...ticketQrText(data.ticketQr),
     '',
@@ -234,6 +278,7 @@ export function buildPaidConfirmationEmail(data: TicketEmailData & { formSlug: s
     '',
     introText(defaultIntro, data.customBody),
     '',
+    ...whenWhereText(data),
     `Bilet: ${data.ticketName} (${formatAmount(data.amountCents, data.currency)})`,
     ...ticketQrText(data.ticketQr),
     '',
@@ -262,8 +307,38 @@ export function buildTicketEmail(
     '',
     intro,
     '',
+    ...whenWhereText(data),
     `Bilet: ${data.ticketName}`,
     ...ticketQrText(data.ticketQr),
   ].join('\n');
   return { subject, html: shellHtml(heading, bodyHtml), text };
+}
+
+/** Wiadomość organizatora do uczestników — treść to zwykły tekst z podstawionymi znacznikami. */
+export function buildParticipantMessageEmail(data: {
+  subject: string;
+  body: string;
+  formTitle: string;
+  formSlug: string;
+  eventDate: Date;
+  location: string | null;
+}): EmailContent {
+  const subject = data.subject.includes(data.formTitle) ? data.subject : `${data.subject} — ${data.formTitle}`;
+  const bodyHtml = [
+    introHtml(data.body, null),
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0;border:1px solid #dbf3f5;border-radius:12px;overflow:hidden;">
+      <tr><td style="padding:12px 16px 0;font-size:13px;color:#24757a;">Wydarzenie</td></tr>
+      <tr><td style="padding:2px 16px 12px;font-size:15px;font-weight:600;color:#0d3135;">${escapeHtml(data.formTitle)}</td></tr>
+      ${whenWhereHtml({ ...data, ticketName: '', amountCents: 0, currency: 'PLN' })}
+    </table>`,
+    buttonHtml(`${baseUrl()}/f/${data.formSlug}`, 'Zobacz stronę wydarzenia'),
+  ].join('');
+  const text = [
+    data.body,
+    '',
+    `Wydarzenie: ${data.formTitle}`,
+    ...whenWhereText({ ...data, ticketName: '', amountCents: 0, currency: 'PLN' }),
+    `Strona wydarzenia: ${baseUrl()}/f/${data.formSlug}`,
+  ].join('\n');
+  return { subject, html: shellHtml(data.subject, bodyHtml), text };
 }

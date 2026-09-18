@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import type { FieldDefinition, FieldType, FormSection } from '@syjonevent/shared';
+import type { FieldCondition, FieldDefinition, FieldType, FormSection } from '@syjonevent/shared';
 import {
   Calendar,
   ChevronDown,
   ChevronRight,
   ChevronUp,
   FolderPlus,
+  GitBranch,
   Hash,
   List,
   Mail,
@@ -37,10 +38,28 @@ interface Props {
   onChange: (sections: FormSection[]) => void;
 }
 
+/** Pola, od których może zależeć widoczność: lista wyboru i checkbox. */
+type ConditionSource = Extract<FieldDefinition, { type: 'select' | 'checkbox' }>;
+
+function isConditionSource(field: FieldDefinition): field is ConditionSource {
+  return field.type === 'select' || field.type === 'checkbox';
+}
+
+/** Dlaczego warunek pola jest niepoprawny (np. po przesunięciu pola źródłowego niżej); null = OK. */
+function conditionError(condition: FieldCondition, earlier: FieldDefinition[]): string | null {
+  const source = earlier.find((f) => f.key === condition.field);
+  if (!source || !isConditionSource(source)) return 'warunek musi wskazywać listę albo checkbox położone wyżej';
+  if (source.type === 'select' && (typeof condition.value !== 'string' || !source.options.includes(condition.value))) {
+    return 'wybrana w warunku opcja nie istnieje już na liście';
+  }
+  return null;
+}
+
 /** Problemy blokujące zapis (API wymaga niepustych nazw i poprawnych kluczy). */
 export function sectionBuilderErrors(sections: FormSection[]): string[] {
   const errors: string[] = [];
   const keys = new Set<string>();
+  const earlier: FieldDefinition[] = [];
   for (const section of sections) {
     if (!section.name.trim()) errors.push('Każda sekcja musi mieć nazwę');
     for (const field of section.fields) {
@@ -53,6 +72,9 @@ export function sectionBuilderErrors(sections: FormSection[]): string[] {
       if (field.type === 'select' && field.options.every((o) => !o.trim())) {
         errors.push(`Lista „${field.label || field.key}” musi mieć przynajmniej jedną opcję`);
       }
+      const problem = field.showIf ? conditionError(field.showIf, earlier) : null;
+      if (problem) errors.push(`Pole „${field.label || field.key}”: ${problem}`);
+      earlier.push(field);
     }
   }
   return [...new Set(errors)];
@@ -229,6 +251,15 @@ export default function SectionBuilder({ sections, onChange }: Props) {
                   const TypeIcon = FIELD_TYPES[field.type].icon;
                   const settingsOpen = expandedFields.has(field.key);
                   const idBase = `${section.id}-${fieldIndex}`;
+                  const earlierFields = [
+                    ...sections.slice(0, sectionIndex).flatMap((s) => s.fields),
+                    ...section.fields.slice(0, fieldIndex),
+                  ];
+                  const conditionSources = earlierFields.filter(isConditionSource);
+                  const conditionSource = field.showIf
+                    ? conditionSources.find((f) => f.key === field.showIf?.field)
+                    : undefined;
+                  const conditionProblem = field.showIf ? conditionError(field.showIf, earlierFields) : null;
                   return (
                     // Klucz po pozycji, nie po field.key — inaczej edycja klucza przebudowywałaby
                     // wiersz i gubiła fokus po każdym znaku.
@@ -266,6 +297,19 @@ export default function SectionBuilder({ sections, onChange }: Props) {
                             </option>
                           ))}
                         </select>
+                        {field.showIf && (
+                          <button
+                            type="button"
+                            onClick={() => setExpandedFields((prev) => new Set(prev).add(field.key))}
+                            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs ${
+                              conditionProblem ? 'bg-red-100 text-red-700' : 'bg-violet-100 text-violet-700'
+                            }`}
+                            title={conditionProblem ?? `Widoczne, gdy „${conditionSource?.label ?? ''}” = ${String(field.showIf.value)}`}
+                          >
+                            <GitBranch className="h-3 w-3" aria-hidden />
+                            warunkowe
+                          </button>
+                        )}
                         <div className="px-1">
                           <Switch
                             size="sm"
@@ -371,6 +415,73 @@ export default function SectionBuilder({ sections, onChange }: Props) {
                                 </option>
                               ))}
                             </select>
+                          </div>
+                          <div className="sm:col-span-2">
+                            <label className="label flex items-center gap-1.5 text-xs" htmlFor={`condition-${idBase}`}>
+                              <GitBranch className="h-3.5 w-3.5 text-violet-600" aria-hidden />
+                              Pokaż to pole
+                            </label>
+                            <div className="flex flex-wrap gap-2">
+                              <select
+                                id={`condition-${idBase}`}
+                                className="input w-auto min-w-[12rem] flex-1 py-2"
+                                value={field.showIf?.field ?? ''}
+                                onChange={(e) => {
+                                  const source = conditionSources.find((f) => f.key === e.target.value);
+                                  updateField(sectionIndex, fieldIndex, {
+                                    showIf: source
+                                      ? { field: source.key, value: source.type === 'checkbox' ? true : (source.options[0] ?? '') }
+                                      : undefined,
+                                  });
+                                }}
+                              >
+                                <option value="">zawsze</option>
+                                {conditionSources.map((source) => (
+                                  <option key={source.key} value={source.key}>
+                                    gdy „{source.label}”…
+                                  </option>
+                                ))}
+                              </select>
+                              {conditionSource && field.showIf && (
+                                <select
+                                  className="input w-auto min-w-[10rem] flex-1 py-2"
+                                  aria-label="Wymagana odpowiedź"
+                                  value={String(field.showIf.value)}
+                                  onChange={(e) =>
+                                    updateField(sectionIndex, fieldIndex, {
+                                      showIf: {
+                                        field: conditionSource.key,
+                                        value: conditionSource.type === 'checkbox' ? e.target.value === 'true' : e.target.value,
+                                      },
+                                    })
+                                  }
+                                >
+                                  {conditionSource.type === 'checkbox' ? (
+                                    <>
+                                      <option value="true">jest zaznaczone</option>
+                                      <option value="false">nie jest zaznaczone</option>
+                                    </>
+                                  ) : (
+                                    conditionSource.options.map((option) => (
+                                      <option key={option} value={option}>
+                                        = {option}
+                                      </option>
+                                    ))
+                                  )}
+                                </select>
+                              )}
+                            </div>
+                            {conditionProblem ? (
+                              <p className="mt-1 text-xs text-red-600">{conditionProblem}</p>
+                            ) : conditionSources.length === 0 ? (
+                              <p className="mt-1 text-xs text-slate-400">
+                                Dodaj wyżej listę wyboru albo checkbox, żeby uzależnić od nich to pole.
+                              </p>
+                            ) : (
+                              <p className="mt-1 text-xs text-slate-400">
+                                Ukryte pole nie jest wymagane i nie trafia do zgłoszenia.
+                              </p>
+                            )}
                           </div>
                         </div>
                       )}

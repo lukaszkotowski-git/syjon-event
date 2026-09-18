@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   CURRENCY,
   MAX_DESCRIPTION_LENGTH,
+  MAX_LOCATION_LENGTH,
   MAX_TICKET_TYPES_PER_FORM,
   MIN_PAID_AMOUNT_CENTS,
 } from './constants.js';
@@ -32,6 +33,7 @@ export const createFormRequest = z.object({
   description: z.string().trim().max(MAX_DESCRIPTION_LENGTH).nullish(),
   eventDate: z.string().datetime({ offset: true }),
   closesAt: z.string().datetime({ offset: true }),
+  location: z.string().trim().max(MAX_LOCATION_LENGTH).nullish(),
   capacityTotal: z.number().int().positive().nullish(),
   termsVersion: z.string().trim().min(1).max(50).default('1.0'),
   privacyPolicyVersion: z.string().trim().min(1).max(50).default('1.0'),
@@ -136,6 +138,7 @@ export const createSubmissionRequest = z.object({
   ticketTypeId: z.string().uuid(),
   buyer: buyerSchema,
   answers: z.record(z.unknown()).default({}),
+  consents: z.record(z.boolean()).default({}),
   discountCode: z.string().trim().min(1).max(40).optional(),
   acceptTerms: z.literal(true, { errorMap: () => ({ message: 'Akceptacja regulaminu jest wymagana' }) }),
   acceptPrivacy: z.literal(true, {
@@ -171,6 +174,7 @@ export interface PublicEventListItemDto {
   summary: string;
   eventDate: string;
   closesAt: string;
+  location: string | null;
   imageUrl: string | null;
   soldOut: boolean;
 }
@@ -181,6 +185,7 @@ export interface PublicFormDto {
   description: string | null;
   eventDate: string;
   closesAt: string;
+  location: string | null;
   termsVersion: string;
   privacyPolicyVersion: string;
   schemaJson: z.infer<typeof formSchemaJson>;
@@ -269,6 +274,7 @@ export interface SubmissionStatusDto {
   formTitle: string;
   formSlug: string;
   eventDate: string;
+  location: string | null;
   confirmationEmailSent: boolean;
   /** Numer biletu — obecny tylko dla opłaconego zgłoszenia, wtedy dostępny jest też obraz QR. */
   ticketReference: string | null;
@@ -276,4 +282,111 @@ export interface SubmissionStatusDto {
   /** Zgadywane z pól formularza po etykiecie ("Imię"/"Nazwisko") — może nie być dopasowania. */
   buyerName: string | null;
   buyerEmail: string;
+}
+
+/* ------------------------------ zespół i role ------------------------------ */
+
+export const ADMIN_ROLES = ['ADMIN', 'VIEWER'] as const;
+export type AdminRole = (typeof ADMIN_ROLES)[number];
+
+export interface AdminMeDto {
+  id: string;
+  email: string;
+  role: AdminRole;
+}
+
+export interface AdminUserDto {
+  id: string;
+  email: string;
+  role: AdminRole;
+  disabled: boolean;
+  createdAt: string;
+  lastSeenAt: string | null;
+}
+
+export const createAdminUserRequest = z.object({
+  email: z.string().trim().toLowerCase().email('Niepoprawny adres e-mail').max(320),
+  password: z.string().min(12, 'Hasło musi mieć minimum 12 znaków').max(200),
+  role: z.enum(ADMIN_ROLES),
+});
+export type CreateAdminUserRequest = z.infer<typeof createAdminUserRequest>;
+
+export const updateAdminUserRequest = z.object({
+  role: z.enum(ADMIN_ROLES).optional(),
+  disabled: z.boolean().optional(),
+  password: z.string().min(12, 'Hasło musi mieć minimum 12 znaków').max(200).optional(),
+});
+export type UpdateAdminUserRequest = z.infer<typeof updateAdminUserRequest>;
+
+/* ------------------------------- dziennik zmian ------------------------------ */
+
+export interface AuditLogEntryDto {
+  id: string;
+  adminEmail: string;
+  action: string;
+  formId: string | null;
+  formTitle: string | null;
+  entityId: string | null;
+  summary: string;
+  createdAt: string;
+}
+
+/* --------------------------- wiadomości do uczestników -------------------------- */
+
+export const MESSAGE_AUDIENCE_STATUSES = ['PAID', 'RESERVED'] as const;
+
+export const messageAudience = z.object({
+  statuses: z.array(z.enum(MESSAGE_AUDIENCE_STATUSES)).min(1, 'Wybierz, do kogo wysłać wiadomość'),
+  /** Pusta lista = wszystkie rodzaje biletów. */
+  ticketTypeIds: z.array(z.string().uuid()).default([]),
+});
+export type MessageAudience = z.infer<typeof messageAudience>;
+
+export const sendMessageRequest = z.object({
+  subject: z.string().trim().min(1, 'Podaj temat').max(200),
+  body: z.string().trim().min(1, 'Wpisz treść').max(10000),
+  audience: messageAudience,
+});
+export type SendMessageRequest = z.infer<typeof sendMessageRequest>;
+
+export interface FormMessageDto {
+  id: string;
+  subject: string;
+  body: string;
+  adminEmail: string | null;
+  recipientCount: number;
+  sentCount: number;
+  failedCount: number;
+  finished: boolean;
+  createdAt: string;
+}
+
+/* ---------------------------------- raporty --------------------------------- */
+
+export interface ReportParticipantDto {
+  submissionId: string;
+  displayName: string | null;
+  email: string;
+  phone: string | null;
+  ticketName: string;
+  ticketReference: string;
+  checkedInAt: string | null;
+}
+
+export interface ReportAnswerSummaryDto {
+  key: string;
+  label: string;
+  type: 'select' | 'checkbox';
+  /** Liczba odpowiedzi na każdą opcję (checkbox: "Tak"/"Nie"). */
+  counts: { option: string; count: number }[];
+  /** Ile osób w ogóle widziało to pole (pole warunkowe mogło być ukryte). */
+  answered: number;
+}
+
+export interface EventReportDto {
+  form: { id: string; title: string; eventDate: string; location: string | null };
+  generatedAt: string;
+  participants: ReportParticipantDto[];
+  answerSummaries: ReportAnswerSummaryDto[];
+  consentSummaries: { key: string; label: string; accepted: number; total: number }[];
 }

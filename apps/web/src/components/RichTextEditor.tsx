@@ -5,6 +5,8 @@ import IconButton from './ui/IconButton';
 interface Props {
   value: string;
   onChange: (html: string) => void;
+  /** Podgląd bez edycji (konto "tylko podgląd"). */
+  readOnly?: boolean;
 }
 
 const COLORS = [
@@ -20,7 +22,7 @@ const COLORS = [
  * biblioteki. onMouseDown z preventDefault na przyciskach paska narzędzi chroni
  * zaznaczenie tekstu w edytorze (inaczej klik na przycisk je kasuje).
  */
-export default function RichTextEditor({ value, onChange }: Props) {
+export default function RichTextEditor({ value, onChange, readOnly = false }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const [showHtmlBox, setShowHtmlBox] = useState(false);
   const [htmlDraft, setHtmlDraft] = useState('');
@@ -97,7 +99,7 @@ export default function RichTextEditor({ value, onChange }: Props) {
 
       <div
         ref={ref}
-        contentEditable
+        contentEditable={!readOnly}
         className="input min-h-[120px] [&_a]:underline"
         onInput={() => onChange(ref.current?.innerHTML ?? '')}
         onBlur={() => onChange(ref.current?.innerHTML ?? '')}

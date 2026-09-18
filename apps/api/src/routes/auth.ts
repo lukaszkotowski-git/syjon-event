@@ -42,7 +42,7 @@ authRouter.post(
 
     const { token, expiresAt } = await createSession(admin.id);
     setSessionCookie(res, token, expiresAt);
-    res.json({ admin: { id: admin.id, email: admin.email } });
+    res.json({ admin: { id: admin.id, email: admin.email, role: admin.role } });
   }),
 );
 

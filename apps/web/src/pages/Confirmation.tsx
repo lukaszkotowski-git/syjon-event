@@ -12,6 +12,7 @@ import {
   Download,
   Hourglass,
   MailCheck,
+  MapPin,
   QrCode,
   RefreshCw,
   TriangleAlert,
@@ -60,6 +61,7 @@ function downloadCalendarFile(status: SubmissionStatusDto, pageUrl: string) {
     `DTSTART;VALUE=DATE:${icsDay(start)}`,
     `DTEND;VALUE=DATE:${icsDay(nextDay)}`,
     `SUMMARY:${icsEscape(status.formTitle)}`,
+    ...(status.location ? [`LOCATION:${icsEscape(status.location)}`] : []),
     `DESCRIPTION:${icsEscape(`Bilet: ${status.ticketName}\nStatus zgłoszenia i kod QR: ${pageUrl}`)}`,
     `URL:${pageUrl}`,
     'END:VEVENT',
@@ -245,6 +247,19 @@ export default function Confirmation() {
                 {eventDateFormat.format(new Date(status.eventDate))}
               </span>
             </p>
+            {status.location && (
+              <p className="mt-0.5 flex items-center justify-center gap-1.5 text-sm text-slate-600">
+                <MapPin className="h-4 w-4 shrink-0 text-brand-600" aria-hidden />
+                <a
+                  href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(status.location)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline decoration-brand-300 underline-offset-2 hover:text-brand-800"
+                >
+                  {status.location}
+                </a>
+              </p>
+            )}
           </div>
         )}
 

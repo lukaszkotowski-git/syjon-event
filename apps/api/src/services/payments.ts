@@ -135,6 +135,8 @@ async function sendPaidConfirmationEmailIfNeeded(submissionId: string): Promise<
   const ticket = nonce ? await ticketEmailAttachment(submission.id, nonce) : null;
   const { subject, html, text } = buildPaidConfirmationEmail({
     formTitle: submission.form.title,
+    eventDate: submission.form.eventDate,
+    location: submission.form.location,
     formSlug: submission.form.slug,
     ticketName: submission.ticketNameSnapshot,
     amountCents: submission.ticketPriceCents,

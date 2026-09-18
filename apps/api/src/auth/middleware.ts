@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
-import { unauthorized } from '../http/errors.js';
+import type { AdminRole } from '@prisma/client';
+import { forbidden, unauthorized } from '../http/errors.js';
 import { prisma } from '../prisma.js';
 import { SESSION_COOKIE, hashSessionToken } from './session.js';
 
@@ -7,7 +8,7 @@ declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
     interface Request {
-      admin?: { id: string; email: string };
+      admin?: { id: string; email: string; role: AdminRole };
       sessionToken?: string;
     }
   }
@@ -33,7 +34,7 @@ export async function requireAdmin(req: Request, _res: Response, next: NextFunct
       throw unauthorized('Sesja wygasła lub jest nieaktywna');
     }
 
-    req.admin = { id: session.admin.id, email: session.admin.email };
+    req.admin = { id: session.admin.id, email: session.admin.email, role: session.admin.role };
     req.sessionToken = token;
 
     // Odświeżamy last_seen_at maksymalnie raz na minutę, żeby nie zapisywać przy każdym requeście.
@@ -41,8 +42,20 @@ export async function requireAdmin(req: Request, _res: Response, next: NextFunct
       await prisma.session.update({ where: { idHash: session.idHash }, data: { lastSeenAt: now } });
     }
 
+    // Konto "tylko podgląd" może czytać wszystko (także eksporty), ale niczego nie zmienia.
+    if (session.admin.role === 'VIEWER' && !READ_METHODS.has(req.method)) {
+      throw forbidden('Twoje konto ma dostęp tylko do podglądu');
+    }
+
     next();
   } catch (error) {
     next(error);
   }
+}
+
+const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+/** Dostęp tylko dla pełnych administratorów — np. zarządzanie kontami i dziennik zmian. */
+export function requireFullAdmin(req: Request, _res: Response, next: NextFunction) {
+  next(req.admin?.role === 'ADMIN' ? undefined : forbidden('Ta sekcja jest dostępna tylko dla administratorów'));
 }

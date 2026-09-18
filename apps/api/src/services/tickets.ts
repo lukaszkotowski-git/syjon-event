@@ -69,6 +69,8 @@ export async function sendTicketEmail(submissionId: string, options: { reissued:
   const { ticketQr, image } = await ticketEmailAttachment(submission.id, nonce);
   const { subject, html, text } = buildTicketEmail({
     formTitle: submission.form.title,
+    eventDate: submission.form.eventDate,
+    location: submission.form.location,
     formSlug: submission.form.slug,
     ticketName: submission.ticketNameSnapshot,
     amountCents: submission.ticketPriceCents,

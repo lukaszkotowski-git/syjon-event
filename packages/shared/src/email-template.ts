@@ -9,6 +9,7 @@ export const EMAIL_BUILTIN_VARIABLES = [
   { name: 'telefon', label: 'Telefon' },
   { name: 'wydarzenie', label: 'Nazwa wydarzenia' },
   { name: 'data_wydarzenia', label: 'Data wydarzenia' },
+  { name: 'miejsce', label: 'Miejsce' },
   { name: 'bilet', label: 'Rodzaj biletu' },
   { name: 'kwota', label: 'Kwota' },
   { name: 'numer_biletu', label: 'Numer biletu' },

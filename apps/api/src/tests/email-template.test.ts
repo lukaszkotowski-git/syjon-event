@@ -41,7 +41,7 @@ const submission = {
   payloadJson: { pole_1: 'Jan', pole_2: 'Kowalski', pole_3: 'Wege', pole_4: true },
   schemaSnapshotJson: schema,
 };
-const form = { title: 'Konferencja Syjon', eventDate: new Date('2026-10-11T16:00:00Z') };
+const form = { title: 'Konferencja Syjon', eventDate: new Date('2026-10-11T16:00:00Z'), location: 'Kościół św. Anny, Warszawa' };
 
 describe('szablon e-maila', () => {
   test('nazwa znacznika ignoruje wielkość liter, polskie znaki i spacje', () => {
@@ -69,13 +69,13 @@ describe('szablon e-maila', () => {
   test('wartości ze zgłoszenia: imię, nazwisko, pola formularza, kwota i data', () => {
     const values = emailTemplateValues(submission as never, form);
     const rendered = renderTemplate(
-      '{{imię}} {{nazwisko}} | {{imie_nazwisko}} | {{preferencje żywieniowe}} | {{pole_3}} | {{nocleg}} | {{kwota}} | {{numer_biletu}} | {{wydarzenie}} | {{data_wydarzenia}}',
+      '{{imię}} {{nazwisko}} | {{imie_nazwisko}} | {{preferencje żywieniowe}} | {{pole_3}} | {{nocleg}} | {{kwota}} | {{numer_biletu}} | {{wydarzenie}} | {{data_wydarzenia}} | {{miejsce}}',
       values,
     );
     // Intl wstawia twarde spacje (np. w "49,00 zł") — porównujemy po ich znormalizowaniu.
     assert.equal(
       rendered.replace(/[\u00a0\u202f]/g, ' '),
-      'Jan Kowalski | Jan Kowalski | Wege | Wege | Tak | 49,00 zł | 3F9A2C1B | Konferencja Syjon | 11 października 2026',
+      'Jan Kowalski | Jan Kowalski | Wege | Wege | Tak | 49,00 zł | 3F9A2C1B | Konferencja Syjon | 11 października 2026 | Kościół św. Anny, Warszawa',
     );
   });
 

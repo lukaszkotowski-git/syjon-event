@@ -21,7 +21,7 @@ export function emailTemplateValues(
     Submission,
     'id' | 'buyerEmail' | 'buyerPhone' | 'ticketNameSnapshot' | 'ticketPriceCents' | 'currency' | 'payloadJson' | 'schemaSnapshotJson'
   >,
-  form: Pick<Form, 'title' | 'eventDate'>,
+  form: Pick<Form, 'title' | 'eventDate' | 'location'>,
 ): Record<string, string> {
   const payload = (submission.payloadJson ?? {}) as Record<string, unknown>;
   const fields = flattenSections(parseFormSchema(submission.schemaSnapshotJson).sections);
@@ -44,6 +44,7 @@ export function emailTemplateValues(
       dateStyle: 'long',
       timeZone: 'Europe/Warsaw',
     }).format(form.eventDate),
+    miejsce: form.location ?? '',
     bilet: submission.ticketNameSnapshot,
     kwota: formatAmount(submission.ticketPriceCents, submission.currency),
     numer_biletu: ticketReference(submission.id),
@@ -59,7 +60,7 @@ export function emailTemplateValues(
 
 /** Tytuł i treść e-maila od organizatora z podstawionymi znacznikami; null = tekst domyślny. */
 export function renderCustomEmailContent(
-  form: Pick<Form, 'title' | 'eventDate' | 'confirmationEmailTitle' | 'confirmationEmailBody'>,
+  form: Pick<Form, 'title' | 'eventDate' | 'location' | 'confirmationEmailTitle' | 'confirmationEmailBody'>,
   submission: Parameters<typeof emailTemplateValues>[0],
 ): { customTitle: string | null; customBody: string | null } {
   if (!form.confirmationEmailTitle && !form.confirmationEmailBody) return { customTitle: null, customBody: null };

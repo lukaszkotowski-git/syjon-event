@@ -6,6 +6,8 @@ import {
   discountCodeInput,
   formSchemaJson,
   normalizePlPhone,
+  pickVisibleAnswers,
+  resolveConsents,
   ticketTypeInput,
   type FieldDefinition,
 } from '@syjonevent/shared';
@@ -165,5 +167,68 @@ describe('CSV', () => {
     assert.ok(csv.startsWith('\uFEFF'));
     assert.ok(csv.includes('"x;y"'));
     assert.ok(csv.includes('"cytat ""test"""'));
+  });
+});
+
+describe('pola warunkowe', () => {
+  const fields: FieldDefinition[] = [
+    { key: 'dieta', label: 'Dieta', type: 'select', required: true, options: ['Normalna', 'Specjalna'] },
+    { key: 'jaka', label: 'Jaka dieta?', type: 'text', required: true, showIf: { field: 'dieta', value: 'Specjalna' } },
+    { key: 'nocleg', label: 'Nocleg', type: 'checkbox', required: false },
+    { key: 'pokoj', label: 'Pokój z', type: 'text', required: false, showIf: { field: 'nocleg', value: true } },
+  ];
+
+  test('ukryte pole nie jest wymagane i nie trafia do odpowiedzi', () => {
+    const { fields: visible, answers } = pickVisibleAnswers(fields, { dieta: 'Normalna', jaka: 'śmieci', nocleg: false });
+    assert.deepEqual(
+      visible.map((f) => f.key),
+      ['dieta', 'nocleg'],
+    );
+    assert.equal('jaka' in answers, false);
+    assert.equal(buildAnswersSchema(visible).safeParse(answers).success, true);
+  });
+
+  test('odsłonięte pole wymagane musi być wypełnione', () => {
+    const { fields: visible, answers } = pickVisibleAnswers(fields, { dieta: 'Specjalna', nocleg: true });
+    assert.deepEqual(
+      visible.map((f) => f.key),
+      ['dieta', 'jaka', 'nocleg', 'pokoj'],
+    );
+    assert.equal(buildAnswersSchema(visible).safeParse(answers).success, false);
+  });
+
+  test('warunek musi wskazywać wcześniejszą listę lub checkbox z istniejącą wartością', () => {
+    const section = (sectionFields: unknown[]) => ({ sections: [{ id: 's', name: 'S', fields: sectionFields }] });
+    assert.equal(formSchemaJson.safeParse(section(fields)).success, true);
+    // Odwołanie do pola położonego niżej.
+    assert.equal(formSchemaJson.safeParse(section([fields[1], fields[0]])).success, false);
+    // Opcja, której nie ma na liście.
+    assert.equal(
+      formSchemaJson.safeParse(section([fields[0], { ...fields[1], showIf: { field: 'dieta', value: 'Wegańska' } }])).success,
+      false,
+    );
+  });
+});
+
+describe('zgody dodatkowe', () => {
+  const definitions = [
+    { key: 'wizerunek', label: 'Zgoda na wizerunek', required: true },
+    { key: 'newsletter', label: 'Informacje o wydarzeniach', required: false },
+  ];
+
+  test('wymagana zgoda musi być zaznaczona', () => {
+    const result = resolveConsents(definitions, { newsletter: true });
+    assert.equal(result.ok, false);
+  });
+
+  test('zapisuje treść i decyzję dla każdej zgody', () => {
+    const result = resolveConsents(definitions, { wizerunek: true });
+    assert.deepEqual(result, {
+      ok: true,
+      consents: [
+        { key: 'wizerunek', label: 'Zgoda na wizerunek', accepted: true },
+        { key: 'newsletter', label: 'Informacje o wydarzeniach', accepted: false },
+      ],
+    });
   });
 });

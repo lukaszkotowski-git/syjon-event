@@ -7,7 +7,9 @@ import {
   CalendarPlus,
   CircleCheck,
   Copy,
+  CopyPlus,
   ExternalLink,
+  Eye,
   Hourglass,
   Lock,
   MoreHorizontal,
@@ -18,6 +20,7 @@ import {
   UserRound,
   Users,
 } from 'lucide-react';
+import { useCanEdit } from '../lib/admin';
 import { api, ApiError, formatDate } from '../lib/api';
 import { plural } from '../lib/format';
 import { FORM_STATUS, type FormStatus } from '../lib/status';
@@ -60,6 +63,7 @@ export default function AdminFormsList() {
   const navigate = useNavigate();
   const toast = useToast();
   const confirm = useConfirm();
+  const canEdit = useCanEdit();
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('status');
   const tab: Tab = isTab(tabParam) ? tabParam : 'ALL';
@@ -87,6 +91,18 @@ export default function AdminFormsList() {
       toast.success('Skopiowano link do formularza');
     } catch {
       toast.error('Nie udało się skopiować linku');
+    }
+  }
+
+  async function duplicateForm(form: FormRow) {
+    setBusyId(form.id);
+    try {
+      const data = await api.post<{ form: { id: string } }>(`/api/forms/${form.id}/duplicate`);
+      toast.success('Utworzono kopię jako szkic — sprawdź daty i opublikuj');
+      navigate(`/admin/formularze/${data.form.id}`);
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : 'Nie udało się skopiować wydarzenia');
+      setBusyId(null);
     }
   }
 
@@ -193,10 +209,12 @@ export default function AdminFormsList() {
             </p>
           )}
         </div>
-        <Link to="/admin/formularze/nowy" className="btn-primary">
-          <Plus className="h-4 w-4" aria-hidden />
-          Nowe wydarzenie
-        </Link>
+        {canEdit && (
+          <Link to="/admin/formularze/nowy" className="btn-primary">
+            <Plus className="h-4 w-4" aria-hidden />
+            Nowe wydarzenie
+          </Link>
+        )}
       </div>
 
       {forms && forms.length > 0 && (
@@ -252,10 +270,12 @@ export default function AdminFormsList() {
           <p className="mt-1 max-w-sm text-sm text-slate-500">
             Utwórz pierwsze wydarzenie — formularz rejestracji, bilety i płatności skonfigurujesz w jednym miejscu.
           </p>
-          <Link to="/admin/formularze/nowy" className="btn-primary mt-5">
-            <Plus className="h-4 w-4" aria-hidden />
-            Utwórz wydarzenie
-          </Link>
+          {canEdit && (
+            <Link to="/admin/formularze/nowy" className="btn-primary mt-5">
+              <Plus className="h-4 w-4" aria-hidden />
+              Utwórz wydarzenie
+            </Link>
+          )}
         </div>
       )}
 
@@ -293,18 +313,22 @@ export default function AdminFormsList() {
               onSelect: () => window.open(`/f/${form.slug}`, '_blank', 'noopener'),
             });
           }
-          if (form.submissionCount === 0) {
-            moreItems.push({ label: 'Usuń', icon: Trash2, tone: 'danger', onSelect: () => void deleteForm(form) });
-          } else if (form.status !== 'ARCHIVED') {
-            // Wydarzenia ze zgłoszeniami nie da się usunąć od razu — archiwizacja jest pierwszym krokiem.
-            moreItems.push({ label: 'Archiwizuj', icon: Archive, onSelect: () => void archiveForm(form) });
-          } else {
-            moreItems.push({
-              label: 'Usuń trwale z danymi',
-              icon: Trash2,
-              tone: 'danger',
-              onSelect: () => void purgeForm(form),
-            });
+          // Konto "tylko podgląd" nie kopiuje, nie archiwizuje ani nie usuwa.
+          if (canEdit) {
+            moreItems.push({ label: 'Duplikuj', icon: CopyPlus, onSelect: () => void duplicateForm(form) });
+            if (form.submissionCount === 0) {
+              moreItems.push({ label: 'Usuń', icon: Trash2, tone: 'danger', onSelect: () => void deleteForm(form) });
+            } else if (form.status !== 'ARCHIVED') {
+              // Wydarzenia ze zgłoszeniami nie da się usunąć od razu — archiwizacja jest pierwszym krokiem.
+              moreItems.push({ label: 'Archiwizuj', icon: Archive, onSelect: () => void archiveForm(form) });
+            } else {
+              moreItems.push({
+                label: 'Usuń trwale z danymi',
+                icon: Trash2,
+                tone: 'danger',
+                onSelect: () => void purgeForm(form),
+              });
+            }
           }
 
           return (
@@ -406,18 +430,21 @@ export default function AdminFormsList() {
                   </span>
                 </Link>
                 <IconButton
-                  icon={Pencil}
-                  label="Edytuj"
+                  icon={canEdit ? Pencil : Eye}
+                  label={canEdit ? 'Edytuj' : 'Podgląd'}
                   size="lg"
+                  disabled={busy}
                   onClick={() => navigate(`/admin/formularze/${form.id}`)}
                 />
-                <Menu
-                  align="right"
-                  triggerLabel="Więcej akcji"
-                  triggerClassName="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 transition hover:border-brand-200 hover:bg-brand-50 hover:text-brand-800 focus:outline-none focus-visible:ring-4 focus-visible:ring-brand-100 disabled:opacity-40"
-                  trigger={<MoreHorizontal className="h-4 w-4" aria-hidden />}
-                  items={moreItems}
-                />
+                {moreItems.length > 0 && (
+                  <Menu
+                    align="right"
+                    triggerLabel="Więcej akcji"
+                    triggerClassName="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 transition hover:border-brand-200 hover:bg-brand-50 hover:text-brand-800 focus:outline-none focus-visible:ring-4 focus-visible:ring-brand-100 disabled:opacity-40"
+                    trigger={<MoreHorizontal className="h-4 w-4" aria-hidden />}
+                    items={moreItems}
+                  />
+                )}
               </div>
             </article>
           );
