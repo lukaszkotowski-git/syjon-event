@@ -54,5 +54,8 @@ export const api = {
 export const formatPln = (cents: number) =>
   new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' }).format(cents / 100);
 
+export const formatDate = (iso: string) =>
+  new Intl.DateTimeFormat('pl-PL', { dateStyle: 'medium' }).format(new Date(iso));
+
 export const formatDateTime = (iso: string) =>
   new Intl.DateTimeFormat('pl-PL', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(iso));

@@ -1,12 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
   Ban,
+  CalendarDays,
+  CalendarPlus,
   CircleCheck,
   CircleX,
   Clock,
   Copy,
+  Download,
   Hourglass,
   MailCheck,
   QrCode,
@@ -17,17 +20,68 @@ import {
 import type { SubmissionStatusDto } from '@syjonevent/shared';
 import { api, ApiError, formatPln } from '../lib/api';
 import { paymentStatusLabel } from '../lib/status';
-import Stepper from '../components/Stepper';
 import { useToast } from '../components/ui/Toast';
 
 const POLL_INTERVAL_MS = 4000;
 const MAX_POLLS = 15;
 
-const REVIEW_STEPS = [
-  { key: 'fields', label: 'Informacje' },
-  { key: 'ticket', label: 'Bilet i dane' },
-  { key: 'review', label: 'Podsumowanie' },
-];
+const eventDateFormat = new Intl.DateTimeFormat('pl-PL', {
+  weekday: 'long',
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+});
+
+/** Znacznik czasu iCalendar (UTC), np. 20261231T190000Z. */
+function icsDate(date: Date): string {
+  return date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+}
+
+/** Dzień w formacie iCalendar (lokalnie), np. 20261231 — wydarzenia mają samą datę, bez godziny. */
+function icsDay(date: Date): string {
+  return `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function icsEscape(text: string): string {
+  return text.replace(/[\\;,]/g, (ch) => `\\${ch}`).replace(/\n/g, '\\n');
+}
+
+/** Plik .ics z wydarzeniem — otwiera się w kalendarzu telefonu, Google i Outlooku. */
+function downloadCalendarFile(status: SubmissionStatusDto, pageUrl: string) {
+  const start = new Date(status.eventDate);
+  const nextDay = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 1);
+  const ics = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Syjon Event//PL',
+    'BEGIN:VEVENT',
+    `UID:${status.submissionId}@syjonevent`,
+    `DTSTAMP:${icsDate(new Date())}`,
+    `DTSTART;VALUE=DATE:${icsDay(start)}`,
+    `DTEND;VALUE=DATE:${icsDay(nextDay)}`,
+    `SUMMARY:${icsEscape(status.formTitle)}`,
+    `DESCRIPTION:${icsEscape(`Bilet: ${status.ticketName}\nStatus zgłoszenia i kod QR: ${pageUrl}`)}`,
+    `URL:${pageUrl}`,
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n');
+  const url = URL.createObjectURL(new Blob([ics], { type: 'text/calendar;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${status.formSlug}.ics`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+/** Wiersz podsumowania: etykieta po lewej, wartość po prawej — długie wartości (e-mail) się łamią. */
+function SummaryRow({ label, children, className = '' }: { label: string; children: ReactNode; className?: string }) {
+  return (
+    <div className={`flex items-center justify-between gap-3 ${className}`}>
+      <span className="shrink-0 text-xs font-medium uppercase tracking-wide text-brand-700/80">{label}</span>
+      <span className="min-w-0 break-words text-right [overflow-wrap:anywhere]">{children}</span>
+    </div>
+  );
+}
 
 type Tone = 'success' | 'error' | 'warning' | 'pending' | 'neutral';
 
@@ -96,6 +150,8 @@ export default function Confirmation() {
   const [status, setStatus] = useState<SubmissionStatusDto | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [pollingDone, setPollingDone] = useState(false);
+  const [checking, setChecking] = useState(false);
   const polls = useRef(0);
 
   const load = useCallback(async () => {
@@ -117,12 +173,22 @@ export default function Confirmation() {
       polls.current += 1;
       const data = await load();
       // Webhook jest źródłem prawdy; odpytujemy, dopóki rezerwacja czeka na płatność.
-      if (!data || data.status !== 'RESERVED' || polls.current >= MAX_POLLS) clearInterval(timer);
+      if (!data || data.status !== 'RESERVED' || polls.current >= MAX_POLLS) {
+        clearInterval(timer);
+        setPollingDone(true);
+      }
     }, POLL_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [load]);
 
   const refresh = useCallback(() => void load(), [load]);
+
+  async function checkAgain() {
+    setChecking(true);
+    setError(null);
+    await load();
+    setChecking(false);
+  }
 
   async function retry() {
     setBusy(true);
@@ -169,14 +235,17 @@ export default function Confirmation() {
 
   return (
     <main className="mx-auto max-w-xl px-4 py-8 sm:px-6 sm:py-10">
-      <div className="card">
-        {/* Po opłaceniu wszystkie kroki są ukończone; wcześniej zgłoszenie wciąż jest na etapie podsumowania. */}
-        <Stepper steps={REVIEW_STEPS} currentIndex={status?.status === 'PAID' ? REVIEW_STEPS.length : 2} />
-      </div>
-
-      <div className="card mt-6 space-y-4 text-center">
+      <div className="card space-y-4 text-center">
         {status?.formTitle && (
-          <p className="text-xs font-semibold uppercase tracking-widest text-brand-700/80">{status.formTitle}</p>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-widest text-brand-700/80">{status.formTitle}</p>
+            <p className="mt-1 inline-flex items-center gap-1.5 text-sm text-slate-600">
+              <CalendarDays className="h-4 w-4 text-brand-600" aria-hidden />
+              <span className="inline-block first-letter:uppercase">
+                {eventDateFormat.format(new Date(status.eventDate))}
+              </span>
+            </p>
+          </div>
         )}
 
         {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
@@ -193,34 +262,29 @@ export default function Confirmation() {
             <StatusIcon tone="success" icon={CircleCheck} />
             <h1 className="text-2xl font-bold text-slate-900">{content?.successTitle || 'Rejestracja potwierdzona'}</h1>
             {content?.successBody && <p className="whitespace-pre-line text-slate-600">{content.successBody}</p>}
-            <div className="rounded-2xl border border-brand-100 bg-brand-50/60 p-4 text-left">
+            <div className="space-y-2 rounded-2xl border border-brand-100 bg-brand-50/60 p-4 text-left">
               {status.buyerName && (
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium uppercase tracking-wide text-brand-700/80">Uczestnik</span>
+                <SummaryRow label="Uczestnik">
                   <span className="font-semibold text-slate-900">{status.buyerName}</span>
-                </div>
+                </SummaryRow>
               )}
-              <div className={`flex items-center justify-between ${status.buyerName ? 'mt-2' : ''}`}>
-                <span className="text-xs font-medium uppercase tracking-wide text-brand-700/80">E-mail</span>
+              <SummaryRow label="E-mail">
                 <span className="font-semibold text-slate-900">{status.buyerEmail}</span>
-              </div>
-              <div className="mt-2 flex items-center justify-between">
-                <span className="text-xs font-medium uppercase tracking-wide text-brand-700/80">Bilet</span>
+              </SummaryRow>
+              <SummaryRow label="Bilet">
                 <span className="font-semibold text-slate-900">{status.ticketName}</span>
-              </div>
-              <div className="mt-2 flex items-center justify-between">
-                <span className="text-xs font-medium uppercase tracking-wide text-brand-700/80">Kwota</span>
+              </SummaryRow>
+              <SummaryRow label="Kwota">
                 <span className="text-lg font-bold text-brand-800">
                   {status.amountCents === 0 ? 'Bezpłatny' : formatPln(status.amountCents)}
                 </span>
-              </div>
+              </SummaryRow>
               {status.discountCodeSnapshot && (
-                <div className="mt-2 flex items-center justify-between border-t border-brand-100 pt-2">
-                  <span className="text-xs font-medium uppercase tracking-wide text-brand-700/80">Kod rabatowy</span>
+                <SummaryRow label="Kod rabatowy" className="border-t border-brand-100 pt-2">
                   <span className="font-mono text-sm font-semibold text-emerald-700">
                     {status.discountCodeSnapshot} (-{formatPln(status.discountAmountCents)})
                   </span>
-                </div>
+                </SummaryRow>
               )}
             </div>
             {status.ticketReference && (
@@ -239,6 +303,24 @@ export default function Confirmation() {
                   <span className="font-mono font-semibold text-slate-900">{status.ticketReference}</span>
                 </p>
                 <p className="mt-1 text-xs text-slate-500">Kod jest jednorazowy — nie udostępniaj go innym.</p>
+                <div className="mt-3 flex flex-wrap justify-center gap-2">
+                  <a
+                    href={`/api/public/submissions/${submissionId}/ticket.png?token=${encodeURIComponent(token)}`}
+                    download={`bilet-${status.ticketReference}.png`}
+                    className="btn-secondary"
+                  >
+                    <Download className="h-4 w-4" aria-hidden />
+                    Pobierz bilet
+                  </a>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => downloadCalendarFile(status, window.location.href)}
+                  >
+                    <CalendarPlus className="h-4 w-4" aria-hidden />
+                    Dodaj do kalendarza
+                  </button>
+                </div>
                 {status.checkedInAt && (
                   <p className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-sm font-medium text-emerald-700">
                     <CircleCheck className="h-4 w-4" aria-hidden />
@@ -295,7 +377,9 @@ export default function Confirmation() {
             <p className="text-slate-600">
               {paymentNotStarted
                 ? 'Miejsce jest zarezerwowane, ale nie udało się połączyć z operatorem płatności. Spróbuj ponownie.'
-                : 'Miejsce jest zarezerwowane. Strona odświeża status automatycznie.'}
+                : pollingDone
+                  ? 'Miejsce jest zarezerwowane. Potwierdzenie płatności jeszcze nie dotarło — sprawdź status ponownie za chwilę.'
+                  : 'Miejsce jest zarezerwowane. Strona odświeża status automatycznie.'}
             </p>
             {status.reservationExpiresAt && (
               <ReservationCountdown expiresAt={status.reservationExpiresAt} onExpire={refresh} />
@@ -303,6 +387,14 @@ export default function Confirmation() {
             <p className="text-sm text-slate-500">
               Ostatnia próba płatności: {paymentStatusLabel(status.lastPayment?.status)}
             </p>
+            {pollingDone && !paymentNotStarted && (
+              <div>
+                <button type="button" className="btn-secondary" onClick={() => void checkAgain()} disabled={checking}>
+                  <RefreshCw className={`h-4 w-4 ${checking ? 'animate-spin' : ''}`} aria-hidden />
+                  {checking ? 'Sprawdzam…' : 'Sprawdź ponownie'}
+                </button>
+              </div>
+            )}
             {retryButton}
           </>
         )}

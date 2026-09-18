@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
   ArrowRight,
+  CalendarClock,
+  CalendarDays,
   ChevronRight,
   CircleCheck,
   ClipboardCheck,
@@ -84,13 +86,62 @@ function StepHeading({ icon: Icon, title, subtitle }: { icon: LucideIcon; title:
   );
 }
 
+/** Szkic rejestracji w sessionStorage — odświeżenie strony nie kasuje wpisanych danych. */
+interface Draft {
+  ticketTypeId: string;
+  buyer: { email: string; phone: string; address: string };
+  answers: Answers;
+}
+
+const draftKey = (slug: string) => `syjonevent:draft:${slug}`;
+
+function loadDraft(slug: string): Draft | null {
+  try {
+    const raw = window.sessionStorage.getItem(draftKey(slug));
+    return raw ? (JSON.parse(raw) as Draft) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveDraft(slug: string, draft: Draft) {
+  try {
+    window.sessionStorage.setItem(draftKey(slug), JSON.stringify(draft));
+  } catch {
+    // Brak dostępu do sessionStorage (np. tryb prywatny) — formularz działa dalej bez szkicu.
+  }
+}
+
+function clearDraft(slug: string) {
+  try {
+    window.sessionStorage.removeItem(draftKey(slug));
+  } catch {
+    // jw.
+  }
+}
+
+const eventDateFormat = new Intl.DateTimeFormat('pl-PL', {
+  weekday: 'long',
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+});
+const closesAtFormat = new Intl.DateTimeFormat('pl-PL', { day: 'numeric', month: 'long' });
+
+/** Gwiazdka pola wymaganego — wizualna; czytnik ekranu dostaje `aria-required` na polu. */
+const RequiredMark = () => (
+  <span aria-hidden className="text-red-600">
+    {' '}*
+  </span>
+);
+
 const legalLinkClass = 'font-medium text-brand-700 underline decoration-brand-300 underline-offset-2 hover:text-brand-900';
 
 export default function PublicForm() {
   const { slug } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [form, setForm] = useState<PublicFormDto | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [stepIndex, setStepIndex] = useState(0);
   const [ticketTypeId, setTicketTypeId] = useState('');
   const [buyer, setBuyer] = useState({ email: '', phone: '', address: '' });
   const [answers, setAnswers] = useState<Answers>({});
@@ -107,23 +158,27 @@ export default function PublicForm() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(true);
-  const [formRevealed, setFormRevealed] = useState(false);
-
-  function revealForm() {
-    setAboutOpen(false);
-    setFormRevealed(true);
-  }
 
   useEffect(() => {
     api
       .get<PublicFormDto>(`/api/public/f/${slug}`)
       .then((data) => {
-        setForm(data);
-        const firstAvailable = data.ticketTypes.find((t) => !t.soldOut);
+        const draft = loadDraft(data.slug);
+        if (draft) {
+          setBuyer(draft.buyer);
+          setAnswers(draft.answers);
+        }
+        const draftTicket = data.ticketTypes.find((t) => t.id === draft?.ticketTypeId && !t.soldOut);
+        const firstAvailable = draftTicket ?? data.ticketTypes.find((t) => !t.soldOut);
         if (firstAvailable) setTicketTypeId(firstAvailable.id);
+        setForm(data);
       })
       .catch((err: ApiError) => setLoadError(err.message));
   }, [slug]);
+
+  useEffect(() => {
+    if (form) saveDraft(form.slug, { ticketTypeId, buyer, answers });
+  }, [form, ticketTypeId, buyer, answers]);
 
   // Własny kod JS admina (np. ukrywanie sekcji w zależności od kontekstu). Konfigurowany
   // w panelu admina, nigdy nie renderowany jako widoczne pole formularza — uruchamiamy go
@@ -155,7 +210,22 @@ export default function PublicForm() {
     return list;
   }, [hasCustomFields]);
 
+  // Krok jest w adresie (?krok=…), więc systemowe „wstecz” cofa o krok zamiast wychodzić z formularza.
+  const stepParam = searchParams.get('krok');
+  const stepIndex = Math.max(
+    0,
+    steps.findIndex((s) => s.key === stepParam),
+  );
   const currentStepKey = steps[stepIndex]?.key;
+
+  function setStep(index: number) {
+    const key = steps[index]?.key;
+    const next = new URLSearchParams(searchParams);
+    if (!key || index === 0) next.delete('krok');
+    else next.set('krok', key);
+    setSearchParams(next);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
   const selectedTicket = form?.ticketTypes.find((t) => t.id === ticketTypeId) ?? null;
   const effectivePriceCents = appliedDiscount
     ? appliedDiscount.discountedPriceCents
@@ -253,7 +323,7 @@ export default function PublicForm() {
         setBuyer((prev) => ({
           ...prev,
           email: prev.email || answeredEmail,
-          phone: prev.phone || answeredPhone,
+          phone: prev.phone || formatPlPhoneInput(answeredPhone),
         }));
       }
     } else if (currentStepKey === 'ticket') {
@@ -262,19 +332,16 @@ export default function PublicForm() {
         return;
       }
     }
-    setStepIndex((i) => Math.min(steps.length - 1, i + 1));
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    setStep(Math.min(steps.length - 1, stepIndex + 1));
   }
 
   function goBack() {
-    setStepIndex((i) => Math.max(0, i - 1));
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    setStep(Math.max(0, stepIndex - 1));
   }
 
   function goToStep(key: string) {
     const idx = steps.findIndex((s) => s.key === key);
-    if (idx >= 0) setStepIndex(idx);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (idx >= 0) setStep(idx);
   }
 
   async function onSubmitFinal() {
@@ -310,6 +377,7 @@ export default function PublicForm() {
         acceptTerms: legal.terms,
         acceptPrivacy: legal.privacy,
       });
+      clearDraft(form.slug);
       window.location.href = response.redirectUrl ?? response.confirmationUrl;
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Nie udało się wysłać zgłoszenia');
@@ -337,6 +405,20 @@ export default function PublicForm() {
   }
 
   const allSoldOut = form.soldOut || form.ticketTypes.every((t) => t.soldOut);
+  const availablePrices = form.ticketTypes.filter((t) => !t.soldOut).map((t) => t.priceCents);
+  const paidPrices = availablePrices.filter((p) => p > 0);
+  const hasFreeTicket = paidPrices.length < availablePrices.length;
+  const minPaid = paidPrices.length > 0 ? Math.min(...paidPrices) : null;
+  const paidLabel =
+    minPaid === null ? null : `${paidPrices.some((p) => p !== minPaid) ? 'od ' : ''}${formatPln(minPaid)}`;
+  const priceLabel =
+    availablePrices.length === 0
+      ? null
+      : paidLabel === null
+        ? 'Bezpłatny'
+        : hasFreeTicket
+          ? `Bezpłatny lub ${paidLabel}`
+          : paidLabel.charAt(0).toUpperCase() + paidLabel.slice(1);
   const hasHeroImage = Boolean(form.backgroundImageDesktopUrl || form.backgroundImageMobileUrl);
 
   const editButton = (label: string, step: string) => (
@@ -388,44 +470,70 @@ export default function PublicForm() {
           </div>
         </div>
 
-        {/* O wydarzeniu — akordeon, domyślnie rozwinięty. */}
-        <div className="border-t border-slate-200 bg-brand-50/40">
-          <button
-            type="button"
-            onClick={() => setAboutOpen((v) => !v)}
-            aria-expanded={aboutOpen}
-            className="flex w-full items-center justify-between gap-4 p-5 text-left sm:p-8"
-          >
-            <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">O wydarzeniu</span>
-            <svg
-              viewBox="0 0 20 20"
-              fill="none"
-              className={`h-4 w-4 shrink-0 text-slate-400 transition-transform duration-300 ${aboutOpen ? 'rotate-180' : ''}`}
+        {/* Najważniejsze informacje: kiedy, do kiedy zapisy i ile kosztuje. */}
+        <dl className="grid gap-3 border-t border-slate-200 p-5 text-sm sm:grid-cols-3 sm:p-8 sm:py-5">
+          <div className="flex items-start gap-2.5">
+            <CalendarDays className="mt-0.5 h-4 w-4 shrink-0 text-brand-600" aria-hidden />
+            <div>
+              <dt className="text-xs text-slate-500">Termin</dt>
+              <dd className="font-medium first-letter:uppercase text-slate-900">
+                {eventDateFormat.format(new Date(form.eventDate))}
+              </dd>
+            </div>
+          </div>
+          {!allSoldOut && (
+            <div className="flex items-start gap-2.5">
+              <CalendarClock className="mt-0.5 h-4 w-4 shrink-0 text-brand-600" aria-hidden />
+              <div>
+                <dt className="text-xs text-slate-500">Zapisy do</dt>
+                <dd className="font-medium text-slate-900">{closesAtFormat.format(new Date(form.closesAt))}</dd>
+              </div>
+            </div>
+          )}
+          {priceLabel && (
+            <div className="flex items-start gap-2.5">
+              <Ticket className="mt-0.5 h-4 w-4 shrink-0 text-brand-600" aria-hidden />
+              <div>
+                <dt className="text-xs text-slate-500">Cena</dt>
+                <dd className="font-medium text-slate-900">{priceLabel}</dd>
+              </div>
+            </div>
+          )}
+        </dl>
+
+        {/* O wydarzeniu — akordeon, domyślnie rozwinięty; formularz jest od razu pod nim. */}
+        {form.description && (
+          <div className="border-t border-slate-200 bg-brand-50/40">
+            <button
+              type="button"
+              onClick={() => setAboutOpen((v) => !v)}
+              aria-expanded={aboutOpen}
+              aria-controls="event-about"
+              className="flex w-full items-center justify-between gap-4 p-5 text-left sm:p-8"
             >
-              <path d="M5 7.5 10 12.5 15 7.5" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
-          <div
-            className={`grid transition-[grid-template-rows] duration-300 ease-in-out ${aboutOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}
-          >
-            <div className="overflow-hidden px-5 sm:px-8">
-              {form.description && (
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">O wydarzeniu</span>
+              <svg
+                viewBox="0 0 20 20"
+                fill="none"
+                aria-hidden
+                className={`h-4 w-4 shrink-0 text-slate-500 transition-transform duration-300 ${aboutOpen ? 'rotate-180' : ''}`}
+              >
+                <path d="M5 7.5 10 12.5 15 7.5" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+            <div
+              id="event-about"
+              className={`grid transition-[grid-template-rows] duration-300 ease-in-out ${aboutOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}
+            >
+              <div className="overflow-hidden px-5 sm:px-8">
                 <div
                   className="prose prose-slate max-w-none pb-5 text-sm text-slate-600 sm:pb-8 sm:text-base [&_a]:text-brand-700 [&_a]:underline"
                   dangerouslySetInnerHTML={{ __html: form.description }}
                 />
-              )}
-              {!formRevealed && !allSoldOut && (
-                <div className="pb-5 sm:pb-8">
-                  <button type="button" onClick={revealForm} className="btn-primary">
-                    Przejdź do rejestracji
-                    <ArrowRight className="h-4 w-4" aria-hidden />
-                  </button>
-                </div>
-              )}
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
         {allSoldOut ? (
           // Brak miejsc: zostawiamy zdjęcie i opis wydarzenia, zamiast samego komunikatu.
@@ -438,24 +546,9 @@ export default function PublicForm() {
               <p className="mt-0.5 text-sm text-amber-800">Wszystkie bilety na to wydarzenie zostały już sprzedane.</p>
             </div>
           </div>
-        ) : !formRevealed ? (
-          <button
-            type="button"
-            onClick={revealForm}
-            className="flex w-full items-center justify-between gap-4 border-t border-slate-200 p-5 text-left sm:p-8"
-          >
-            <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Formularz rejestracyjny</span>
-            <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4 shrink-0 text-slate-400">
-              <path d="M5 7.5 10 12.5 15 7.5" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
         ) : (
-          <div className="border-t border-slate-200 p-5 sm:p-8">
-            <h2 className="font-display text-xl font-bold leading-snug text-slate-900">{form.title}</h2>
-
-            <div className="mt-6">
-              <Stepper steps={steps} currentIndex={stepIndex} />
-            </div>
+          <div id="rejestracja" className="border-t border-slate-200 p-5 sm:p-8">
+            <Stepper steps={steps} currentIndex={stepIndex} />
 
             <div className="mt-8 space-y-6">
               {currentStepKey === 'fields' && (
@@ -471,30 +564,38 @@ export default function PublicForm() {
                       {section.fields.map((field) => {
                         const hasError = Boolean(fieldErrors[field.key]);
                         const inputId = `field-${field.key}`;
+                        const errorId = `${inputId}-error`;
+                        const a11y = {
+                          'aria-invalid': hasError || undefined,
+                          'aria-required': field.required || undefined,
+                          'aria-describedby': hasError ? errorId : undefined,
+                        };
                         return (
                           <div key={field.key} data-field-key={field.key}>
                             {field.type === 'checkbox' ? (
                               <label className={`flex items-start gap-2 text-sm ${hasError ? 'text-red-700' : ''}`}>
                                 <input
                                   type="checkbox"
-                                  aria-invalid={hasError || undefined}
+                                  {...a11y}
                                   className="mt-0.5 h-4 w-4 rounded border-slate-300 accent-brand-600 focus:ring-brand-200"
                                   checked={Boolean(answers[field.key])}
                                   onChange={(e) => setAnswers({ ...answers, [field.key]: e.target.checked })}
                                 />
                                 <span>
-                                  {field.label} {field.required && '*'}
+                                  {field.label}
+                                  {field.required && <RequiredMark />}
                                 </span>
                               </label>
                             ) : (
                               <>
                                 <label className={`label ${hasError ? 'text-red-700' : ''}`} htmlFor={inputId}>
-                                  {field.label} {field.required && '*'}
+                                  {field.label}
+                                  {field.required && <RequiredMark />}
                                 </label>
                                 {field.type === 'select' ? (
                                   <select
                                     id={inputId}
-                                    aria-invalid={hasError || undefined}
+                                    {...a11y}
                                     className={`input ${hasError ? 'input-error' : ''}`}
                                     value={String(answers[field.key] ?? '')}
                                     onChange={(e) => setAnswers({ ...answers, [field.key]: e.target.value })}
@@ -509,7 +610,7 @@ export default function PublicForm() {
                                 ) : (
                                   <input
                                     id={inputId}
-                                    aria-invalid={hasError || undefined}
+                                    {...a11y}
                                     className={`input ${hasError ? 'input-error' : ''}`}
                                     type={
                                       field.type === 'number'
@@ -533,7 +634,11 @@ export default function PublicForm() {
                                 )}
                               </>
                             )}
-                            {hasError && <p className="mt-1 text-xs text-red-600">{fieldErrors[field.key]}</p>}
+                            {hasError && (
+                              <p id={errorId} className="mt-1 text-xs text-red-600">
+                                {fieldErrors[field.key]}
+                              </p>
+                            )}
                           </div>
                         );
                       })}
@@ -545,13 +650,19 @@ export default function PublicForm() {
               {currentStepKey === 'ticket' && (
                 <section className="space-y-6">
                   <StepHeading icon={Ticket} title="Wybierz bilet" subtitle="Wskaż rodzaj biletu, na który się rejestrujesz." />
-                  <div className="space-y-3" role="radiogroup" aria-label="Rodzaj biletu" data-invalid={Boolean(ticketError) || undefined}>
+                  <div
+                    className="space-y-3"
+                    role="radiogroup"
+                    aria-label="Rodzaj biletu"
+                    aria-describedby={ticketError ? 'ticket-error' : undefined}
+                    data-invalid={Boolean(ticketError) || undefined}
+                  >
                     {form.ticketTypes.map((ticket) => {
                       const active = ticketTypeId === ticket.id;
                       return (
                         <label
                           key={ticket.id}
-                          className={`flex cursor-pointer items-center justify-between gap-4 rounded-2xl border-2 p-4 transition ${
+                          className={`flex cursor-pointer items-center justify-between gap-4 rounded-2xl border-2 p-4 transition has-[:focus-visible]:ring-4 has-[:focus-visible]:ring-brand-200 ${
                             ticket.soldOut
                               ? 'cursor-not-allowed border-slate-200 bg-slate-50 opacity-60'
                               : active
@@ -588,7 +699,11 @@ export default function PublicForm() {
                       );
                     })}
                   </div>
-                  {ticketError && <p className="text-sm text-red-600">{ticketError}</p>}
+                  {ticketError && (
+                    <p id="ticket-error" className="text-sm text-red-600">
+                      {ticketError}
+                    </p>
+                  )}
 
                   {form.hasDiscountCodes && selectedTicket && selectedTicket.priceCents > 0 && (
                     <div>
@@ -615,6 +730,8 @@ export default function PublicForm() {
                               <input
                                 id="discount-code"
                                 className={`input bg-white font-mono uppercase ${discountError ? 'input-error' : ''}`}
+                                aria-invalid={Boolean(discountError) || undefined}
+                                aria-describedby={discountError ? 'discount-code-error' : undefined}
                                 placeholder="np. WOLONTARIUSZ"
                                 autoFocus
                                 value={discountCodeText}
@@ -629,7 +746,11 @@ export default function PublicForm() {
                                   }
                                 }}
                               />
-                              {discountError && <p className="mt-1 text-xs text-red-600">{discountError}</p>}
+                              {discountError && (
+                                <p id="discount-code-error" className="mt-1 text-xs text-red-600">
+                                  {discountError}
+                                </p>
+                              )}
                             </div>
                             <button
                               type="button"
@@ -664,7 +785,8 @@ export default function PublicForm() {
                     <h3 className="font-semibold text-slate-900">Dane kupującego</h3>
                     <div>
                       <label className="label" htmlFor="buyer-email">
-                        E-mail *
+                        E-mail
+                        <RequiredMark />
                       </label>
                       <div className="relative">
                         <Mail
@@ -676,6 +798,7 @@ export default function PublicForm() {
                           type="email"
                           autoComplete="email"
                           aria-invalid={Boolean(buyerErrors.email) || undefined}
+                          aria-describedby="buyer-email-hint"
                           className={`input pl-10 ${buyerErrors.email ? 'input-error' : ''}`}
                           placeholder="jan.kowalski@example.com"
                           value={buyer.email}
@@ -684,9 +807,13 @@ export default function PublicForm() {
                         />
                       </div>
                       {buyerErrors.email ? (
-                        <p className="mt-1 text-xs text-red-600">{buyerErrors.email}</p>
+                        <p id="buyer-email-hint" className="mt-1 text-xs text-red-600">
+                          {buyerErrors.email}
+                        </p>
                       ) : (
-                        <p className="mt-1 text-xs text-slate-500">Na ten adres wyślemy potwierdzenie.</p>
+                        <p id="buyer-email-hint" className="mt-1 text-xs text-slate-500">
+                          Na ten adres wyślemy potwierdzenie i bilet.
+                        </p>
                       )}
                     </div>
                     <div>
@@ -703,13 +830,18 @@ export default function PublicForm() {
                           type="tel"
                           autoComplete="tel"
                           aria-invalid={Boolean(buyerErrors.phone) || undefined}
+                          aria-describedby={buyerErrors.phone ? 'buyer-phone-error' : undefined}
                           className={`input pl-10 ${buyerErrors.phone ? 'input-error' : ''}`}
                           placeholder="+48 601 234 567"
                           value={buyer.phone}
                           onChange={(e) => setBuyer({ ...buyer, phone: formatPlPhoneInput(e.target.value) })}
                         />
                       </div>
-                      {buyerErrors.phone && <p className="mt-1 text-xs text-red-600">{buyerErrors.phone}</p>}
+                      {buyerErrors.phone && (
+                        <p id="buyer-phone-error" className="mt-1 text-xs text-red-600">
+                          {buyerErrors.phone}
+                        </p>
+                      )}
                     </div>
                     <div>
                       <label className="label" htmlFor="buyer-address">
@@ -834,6 +966,9 @@ export default function PublicForm() {
                       <input
                         type="checkbox"
                         className="mt-0.5 h-4 w-4 rounded border-slate-300 accent-brand-600 focus:ring-brand-200"
+                        aria-invalid={(Boolean(legalError) && !legal.terms) || undefined}
+                        aria-required
+                        aria-describedby={legalError ? 'legal-error' : undefined}
                         checked={legal.terms}
                         onChange={(e) => setLegal({ ...legal, terms: e.target.checked })}
                       />
@@ -842,28 +977,41 @@ export default function PublicForm() {
                         <a href={TERMS_URL} target="_blank" rel="noopener noreferrer" className={legalLinkClass}>
                           regulamin
                         </a>{' '}
-                        (wersja {form.termsVersion}) *
+                        (wersja {form.termsVersion})
+                        <RequiredMark />
                       </span>
                     </label>
                     <label className="flex items-start gap-2">
                       <input
                         type="checkbox"
                         className="mt-0.5 h-4 w-4 rounded border-slate-300 accent-brand-600 focus:ring-brand-200"
+                        aria-invalid={(Boolean(legalError) && !legal.privacy) || undefined}
+                        aria-required
+                        aria-describedby={legalError ? 'legal-error' : undefined}
                         checked={legal.privacy}
                         onChange={(e) => setLegal({ ...legal, privacy: e.target.checked })}
                       />
                       <span>
-                        Zapoznałem się z{' '}
+                        Zapoznałem/-am się z{' '}
                         <a href={PRIVACY_POLICY_URL} target="_blank" rel="noopener noreferrer" className={legalLinkClass}>
                           polityką prywatności
                         </a>{' '}
-                        (wersja {form.privacyPolicyVersion}) *
+                        (wersja {form.privacyPolicyVersion})
+                        <RequiredMark />
                       </span>
                     </label>
-                    {legalError && <p className="text-xs text-red-600">{legalError}</p>}
+                    {legalError && (
+                      <p id="legal-error" className="text-xs text-red-600">
+                        {legalError}
+                      </p>
+                    )}
                   </div>
 
-                  {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+                  {error && (
+                    <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+                      {error}
+                    </p>
+                  )}
                 </section>
               )}
             </div>

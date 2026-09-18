@@ -1,48 +1,10 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { ArrowRight, CalendarDays, ChevronDown, LogIn, TicketX } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { ArrowRight, CalendarDays, LogIn, TicketX, X } from 'lucide-react';
 import type { PublicEventListItemDto } from '@syjonevent/shared';
-import { api, ApiError } from '../lib/api';
-import { PRIVACY_POLICY_URL, TERMS_URL } from '../lib/legal';
-
-const SOCIAL_LINKS = [
-  {
-    label: 'Facebook',
-    href: 'https://www.facebook.com/wspolnota.syjon.waw',
-    icon: <path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z" />,
-  },
-  {
-    label: 'YouTube',
-    href: 'https://www.youtube.com/channel/UCvyDmZjgG5AfxiZWluYVuvw/featured',
-    icon: (
-      <>
-        <path d="M22.54 6.42a2.78 2.78 0 0 0-1.94-2C18.88 4 12 4 12 4s-6.88 0-8.6.46a2.78 2.78 0 0 0-1.94 2A29 29 0 0 0 1 11.75a29 29 0 0 0 .46 5.33A2.78 2.78 0 0 0 3.4 19c1.72.46 8.6.46 8.6.46s6.88 0 8.6-.46a2.78 2.78 0 0 0 1.94-2 29 29 0 0 0 .46-5.25 29 29 0 0 0-.46-5.33z" />
-        <polygon points="9.75 15.02 15.5 11.75 9.75 8.48 9.75 15.02" />
-      </>
-    ),
-  },
-  {
-    label: 'Instagram',
-    href: 'https://www.instagram.com/wspolnota_syjon/',
-    icon: (
-      <>
-        <rect width="20" height="20" x="2" y="2" rx="5" ry="5" />
-        <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z" />
-        <line x1="17.5" x2="17.5" y1="6.5" y2="6.5" />
-      </>
-    ),
-  },
-  {
-    label: 'TikTok',
-    href: 'https://www.tiktok.com/@wspolnota_syjon',
-    icon: (
-      <>
-        <path d="M13 4v12a4 4 0 1 1-4-4" />
-        <path d="M13 8a4 4 0 0 0 4 4v3" />
-      </>
-    ),
-  },
-];
+import { api } from '../lib/api';
+import LoginForm from '../components/LoginForm';
+import { SiteFooter, SiteHeader, SocialLinks } from '../components/SiteChrome';
 
 const PAST_EVENTS = [
   {
@@ -104,59 +66,57 @@ function EventCard({ event, delay = 0 }: { event: PublicEventListItemDto; delay?
 }
 
 function LoginPanel({ onClose }: { onClose: () => void }) {
-  const navigate = useNavigate();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  async function onSubmit(event: FormEvent) {
-    event.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
-      await api.post('/api/auth/login', { email, password });
-      navigate('/admin');
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Nie udało się zalogować');
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return (
     <div className="animate-pop-in absolute right-0 top-full z-30 mt-3 w-72 rounded-2xl border border-slate-200 bg-white p-4 shadow-card">
       <div className="mb-3 flex items-center justify-between">
         <p className="text-sm font-semibold text-slate-800">Logowanie do panelu</p>
-        <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600" aria-label="Zamknij">
-          ✕
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+          aria-label="Zamknij"
+        >
+          <X className="h-4 w-4" aria-hidden />
         </button>
       </div>
-      <form onSubmit={onSubmit} className="space-y-2.5">
-        <input
-          type="email"
-          className="input"
-          placeholder="E-mail"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          autoComplete="username"
-          required
-        />
-        <input
-          type="password"
-          className="input"
-          placeholder="Hasło"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          autoComplete="current-password"
-          required
-        />
-        {error && <p className="rounded-lg bg-red-50 px-2.5 py-1.5 text-xs text-red-700">{error}</p>}
-        <button type="submit" className="btn-primary w-full" disabled={busy}>
-          {busy ? 'Logowanie…' : 'Zaloguj się'}
-        </button>
-      </form>
+      <LoginForm compact />
     </div>
+  );
+}
+
+/**
+ * Film z poprzedniego wydarzenia: gra tylko, gdy jest widoczny na ekranie, i nie pobiera się
+ * w całości od razu — dwa filmy naraz zjadały transfer na komórce.
+ */
+function PastEventVideo({ src }: { src: string }) {
+  const ref = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    const video = ref.current;
+    if (!video) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry?.isIntersecting) void video.play().catch(() => undefined);
+        else video.pause();
+      },
+      { threshold: 0.5 },
+    );
+    observer.observe(video);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <video
+      ref={ref}
+      src={src}
+      muted
+      loop
+      playsInline
+      controls
+      preload="metadata"
+      className="aspect-video w-full bg-slate-900 object-cover"
+    />
   );
 }
 
@@ -176,51 +136,21 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-white text-slate-900">
       {/* Nav */}
-      <header className="sticky top-0 z-20 border-b border-slate-100/80 bg-white/80 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3.5">
-          <div className="flex items-center gap-2.5">
-            <img src="/logo.png" alt="Syjon Event" className="h-9 w-9" />
-            <span className="font-display text-lg font-semibold text-brand-900">Syjon Event</span>
-          </div>
-          <div className="flex items-center gap-4">
-            <div className="hidden items-center gap-3.5 sm:flex">
-              {SOCIAL_LINKS.map((social) => (
-                <a
-                  key={social.label}
-                  href={social.href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label={social.label}
-                  className="inline-flex text-slate-400 transition hover:-translate-y-0.5 hover:scale-110 hover:text-brand-700"
-                >
-                  <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth={1.8}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="h-[18px] w-[18px]"
-                  >
-                    {social.icon}
-                  </svg>
-                </a>
-              ))}
-            </div>
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setLoginOpen((v) => !v)}
-                className="btn-ghost text-sm text-brand-800 hover:bg-brand-50"
-              >
-                <LogIn className="h-4 w-4" aria-hidden />
-                Login
-              </button>
-              {loginOpen && <LoginPanel onClose={() => setLoginOpen(false)} />}
-            </div>
-          </div>
+      <SiteHeader>
+        <SocialLinks className="hidden sm:flex" />
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setLoginOpen((v) => !v)}
+            aria-expanded={loginOpen}
+            className="btn-ghost text-sm text-brand-800 hover:bg-brand-50"
+          >
+            <LogIn className="h-4 w-4" aria-hidden />
+            Login
+          </button>
+          {loginOpen && <LoginPanel onClose={() => setLoginOpen(false)} />}
         </div>
-      </header>
+      </SiteHeader>
 
       {/* Hero */}
       <section className="relative overflow-hidden bg-brand-gradient">
@@ -232,7 +162,7 @@ export default function Home() {
           aria-hidden
           className="animate-float-slower absolute -bottom-32 -right-16 h-96 w-96 rounded-full bg-brand-400/20 blur-3xl"
         />
-        <div className="relative mx-auto max-w-6xl px-6 py-24 text-center sm:py-32">
+        <div className="relative mx-auto max-w-6xl px-6 py-14 text-center sm:py-20">
           <span
             className="animate-fade-in-up badge border border-white/25 bg-white/10 px-3.5 py-1.5 text-brand-50"
           >
@@ -252,7 +182,7 @@ export default function Home() {
           </p>
           <div
             style={{ animationDelay: '270ms' }}
-            className="animate-fade-in-up mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row"
+            className="animate-fade-in-up mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row"
           >
             <button
               type="button"
@@ -262,20 +192,11 @@ export default function Home() {
               Zobacz wydarzenia
             </button>
           </div>
-          <button
-            type="button"
-            onClick={() => eventsRef.current?.scrollIntoView({ behavior: 'smooth' })}
-            aria-label="Przewiń do listy wydarzeń"
-            style={{ animationDelay: '450ms' }}
-            className="animate-fade-in-up mx-auto mt-14 block text-brand-100/70 transition hover:text-white"
-          >
-            <ChevronDown className="h-6 w-6 animate-bounce" aria-hidden />
-          </button>
         </div>
       </section>
 
       {/* Otwarte zapisy */}
-      <section ref={eventsRef} className="mx-auto max-w-6xl px-6 py-20 sm:py-24">
+      <section ref={eventsRef} className="mx-auto max-w-6xl scroll-mt-16 px-6 py-16 sm:py-20">
         <div className="mx-auto max-w-2xl text-center">
           <h2 className="text-3xl font-bold text-slate-900">Wydarzenia z otwartymi zapisami</h2>
           <p className="mt-3 text-slate-500">
@@ -316,15 +237,7 @@ export default function Home() {
           <div className="mt-12 grid gap-8 sm:grid-cols-2">
             {PAST_EVENTS.map((item) => (
               <div key={item.title} className="overflow-hidden rounded-3xl bg-white shadow-card">
-                <video
-                  src={item.video}
-                  autoPlay
-                  muted
-                  loop
-                  playsInline
-                  controls
-                  className="aspect-video w-full bg-slate-900 object-cover"
-                />
+                <PastEventVideo src={item.video} />
                 <div className="p-5">
                   <h3 className="font-display text-lg font-semibold text-slate-900">{item.title}</h3>
                   <p className="mt-1.5 text-sm text-slate-500">{item.description}</p>
@@ -335,36 +248,7 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Footer */}
-      <footer className="border-t border-slate-100">
-        <div className="mx-auto flex max-w-6xl flex-col items-center gap-4 px-6 py-8 text-sm text-slate-500 sm:flex-row sm:justify-between">
-          <div className="flex items-center gap-2">
-            <img src="/logo.png" alt="Syjon Event" className="h-6 w-6" />
-            <span>Syjon Event</span>
-          </div>
-          <nav className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2">
-            <Link to="/platnosci" className="hover:text-brand-700 hover:underline">
-              Sposoby płatności
-            </Link>
-            <a
-              href={PRIVACY_POLICY_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hover:text-brand-700 hover:underline"
-            >
-              Polityka prywatności
-            </a>
-            <a
-              href={TERMS_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hover:text-brand-700 hover:underline"
-            >
-              Regulamin serwisu internetowego
-            </a>
-          </nav>
-        </div>
-      </footer>
+      <SiteFooter />
     </main>
   );
 }

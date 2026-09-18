@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { CalendarRange, ChartColumn } from 'lucide-react';
+import { CalendarRange, ChartColumn, LogOut } from 'lucide-react';
 import { api } from '../lib/api';
 
 const NAV_TABS = [
@@ -26,25 +26,50 @@ export default function AdminLayout() {
     navigate('/admin/login', { replace: true });
   }
 
-  if (!checked) return <p className="p-8 text-slate-500">Ładowanie…</p>;
+  if (!checked) {
+    // Szkielet w kształcie panelu — bez przeskoku układu po sprawdzeniu sesji.
+    return (
+      <div className="min-h-screen" aria-busy="true" aria-label="Ładowanie panelu">
+        <div className="border-b border-slate-200 bg-white">
+          <div className="mx-auto flex max-w-6xl animate-pulse items-center justify-between px-4 py-3 sm:px-6">
+            <div className="flex items-center gap-2.5">
+              <div className="h-8 w-8 rounded-full bg-slate-100" />
+              <div className="h-4 w-32 rounded bg-slate-100" />
+            </div>
+            <div className="h-9 w-24 rounded-xl bg-slate-100" />
+          </div>
+        </div>
+        <div className="mx-auto max-w-6xl animate-pulse space-y-3 px-4 py-8 sm:px-6">
+          <div className="h-7 w-40 rounded bg-slate-100" />
+          <div className="h-28 rounded-2xl bg-slate-100" />
+          <div className="h-28 rounded-2xl bg-slate-100" />
+        </div>
+      </div>
+    );
+  }
   if (!admin) return null;
 
   return (
     <div className="min-h-screen">
       <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3">
-          <Link to="/admin" className="flex items-center gap-2.5 font-semibold">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
+          <Link to="/admin" className="flex shrink-0 items-center gap-2.5 font-semibold">
             <img src="/logo.png" alt="Syjon Event" className="h-8 w-8" />
-            Syjon Event <span className="text-slate-400">/ panel</span>
+            <span className="hidden sm:inline">
+              Syjon Event <span className="text-slate-400">/ panel</span>
+            </span>
           </Link>
-          <div className="flex items-center gap-3 text-sm">
-            <span className="text-slate-500">{admin.email}</span>
-            <button onClick={logout} className="btn-secondary">
+          <div className="flex min-w-0 items-center gap-3 text-sm">
+            <span className="hidden truncate text-slate-500 sm:block" title={admin.email}>
+              {admin.email}
+            </span>
+            <button onClick={logout} className="btn-secondary shrink-0 px-3 sm:px-5" title={admin.email}>
+              <LogOut className="h-4 w-4" aria-hidden />
               Wyloguj
             </button>
           </div>
         </div>
-        <nav className="mx-auto flex max-w-6xl gap-5 px-6">
+        <nav className="mx-auto flex max-w-6xl gap-5 overflow-x-auto px-4 sm:px-6">
           {NAV_TABS.map((tab) => (
             <NavLink
               key={tab.to}
@@ -64,7 +89,7 @@ export default function AdminLayout() {
           ))}
         </nav>
       </header>
-      <main className="mx-auto max-w-6xl px-6 py-8">
+      <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
         <Outlet />
       </main>
     </div>

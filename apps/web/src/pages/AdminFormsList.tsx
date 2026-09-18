@@ -10,6 +10,7 @@ import {
   ExternalLink,
   Hourglass,
   Lock,
+  MoreHorizontal,
   Pencil,
   ScanLine,
   Plus,
@@ -17,11 +18,12 @@ import {
   UserRound,
   Users,
 } from 'lucide-react';
-import { api, ApiError, formatDateTime } from '../lib/api';
+import { api, ApiError, formatDate } from '../lib/api';
 import { plural } from '../lib/format';
 import { FORM_STATUS, type FormStatus } from '../lib/status';
 import { useConfirm } from '../components/ui/ConfirmDialog';
 import IconButton from '../components/ui/IconButton';
+import Menu, { type MenuItem } from '../components/ui/Menu';
 import StatusBadge from '../components/ui/StatusBadge';
 import { useToast } from '../components/ui/Toast';
 
@@ -146,7 +148,12 @@ export default function AdminFormsList() {
       description: (
         <>
           <strong className="font-medium text-slate-800">{form.title}</strong> oraz{' '}
-          <strong className="font-medium text-slate-800">wszystkie {form.submissionCount} zgłoszenia(-ń)</strong> i
+          <strong className="font-medium text-slate-800">
+            {form.submissionCount === 1
+              ? 'jedyne zgłoszenie'
+              : `wszystkie ${plural(form.submissionCount, 'zgłoszenie', 'zgłoszenia', 'zgłoszeń')}`}
+          </strong>{' '}
+          i
           powiązane płatności zostaną nieodwracalnie usunięte z bazy danych. Tej operacji nie można cofnąć.
         </>
       ),
@@ -270,6 +277,36 @@ export default function AdminFormsList() {
           const closed = new Date(form.closesAt) <= new Date();
           const busy = busyId === form.id;
 
+          // Rzadziej używane akcje w menu „⋯”; nieodwracalne usunięcie zawsze na końcu, oddzielone kolorem.
+          const moreItems: MenuItem[] = [];
+          if (form.paidCount > 0) {
+            moreItems.push({
+              label: 'Obecność i skanowanie',
+              icon: ScanLine,
+              onSelect: () => navigate(`/admin/formularze/${form.id}/obecnosc`),
+            });
+          }
+          if (form.status === 'PUBLISHED') {
+            moreItems.push({
+              label: 'Otwórz formularz',
+              icon: ExternalLink,
+              onSelect: () => window.open(`/f/${form.slug}`, '_blank', 'noopener'),
+            });
+          }
+          if (form.submissionCount === 0) {
+            moreItems.push({ label: 'Usuń', icon: Trash2, tone: 'danger', onSelect: () => void deleteForm(form) });
+          } else if (form.status !== 'ARCHIVED') {
+            // Wydarzenia ze zgłoszeniami nie da się usunąć od razu — archiwizacja jest pierwszym krokiem.
+            moreItems.push({ label: 'Archiwizuj', icon: Archive, onSelect: () => void archiveForm(form) });
+          } else {
+            moreItems.push({
+              label: 'Usuń trwale z danymi',
+              icon: Trash2,
+              tone: 'danger',
+              onSelect: () => void purgeForm(form),
+            });
+          }
+
           return (
             <article
               key={form.id}
@@ -316,13 +353,13 @@ export default function AdminFormsList() {
                 <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-600">
                   <span className="inline-flex items-center gap-1.5" title="Data wydarzenia">
                     <CalendarDays className="h-4 w-4 text-slate-400" aria-hidden />
-                    {formatDateTime(form.eventDate)}
+                    {formatDate(form.eventDate)}
                   </span>
                   {form.status === 'PUBLISHED' && (
                     <span className="inline-flex items-center gap-1.5 text-slate-400" title="Zamknięcie zapisów">
                       <CalendarClock className="h-4 w-4" aria-hidden />
                       {closed ? 'Zapisy zamknięte ' : 'Zapisy do '}
-                      {formatDateTime(form.closesAt)}
+                      {formatDate(form.closesAt)}
                     </span>
                   )}
                   <span className="inline-flex items-center gap-1.5">
@@ -368,58 +405,19 @@ export default function AdminFormsList() {
                     {form.submissionCount}
                   </span>
                 </Link>
-                {form.paidCount > 0 && (
-                  <IconButton
-                    icon={ScanLine}
-                    label="Obecność i skanowanie"
-                    size="lg"
-                    onClick={() => navigate(`/admin/formularze/${form.id}/obecnosc`)}
-                  />
-                )}
                 <IconButton
                   icon={Pencil}
                   label="Edytuj"
                   size="lg"
                   onClick={() => navigate(`/admin/formularze/${form.id}`)}
                 />
-                {form.status === 'PUBLISHED' && (
-                  <IconButton
-                    icon={ExternalLink}
-                    label="Otwórz formularz"
-                    size="lg"
-                    onClick={() => window.open(`/f/${form.slug}`, '_blank', 'noopener')}
-                  />
-                )}
-                {form.submissionCount === 0 ? (
-                  <IconButton
-                    icon={Trash2}
-                    label="Usuń"
-                    tone="danger"
-                    size="lg"
-                    disabled={busy}
-                    onClick={() => void deleteForm(form)}
-                  />
-                ) : form.status !== 'ARCHIVED' ? (
-                  // Wydarzenia ze zgłoszeniami nie da się usunąć od razu — proponujemy archiwizację jako pierwszy krok.
-                  <IconButton
-                    icon={Archive}
-                    label="Archiwizuj"
-                    tone="danger"
-                    size="lg"
-                    disabled={busy}
-                    onClick={() => void archiveForm(form)}
-                  />
-                ) : (
-                  // Zarchiwizowane wydarzenie ze zgłoszeniami można usunąć trwale wraz z danymi.
-                  <IconButton
-                    icon={Trash2}
-                    label="Usuń trwale"
-                    tone="danger"
-                    size="lg"
-                    disabled={busy}
-                    onClick={() => void purgeForm(form)}
-                  />
-                )}
+                <Menu
+                  align="right"
+                  triggerLabel="Więcej akcji"
+                  triggerClassName="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 transition hover:border-brand-200 hover:bg-brand-50 hover:text-brand-800 focus:outline-none focus-visible:ring-4 focus-visible:ring-brand-100 disabled:opacity-40"
+                  trigger={<MoreHorizontal className="h-4 w-4" aria-hidden />}
+                  items={moreItems}
+                />
               </div>
             </article>
           );

@@ -129,11 +129,16 @@ const HIDDEN_BUILTIN_VARIABLES = new Set(['email', 'telefon', 'kwota']);
 
 const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 
-const toLocalInput = (iso: string) => {
+/** ISO → "RRRR-MM-DD" w strefie przeglądarki (wartość pola typu date). */
+const toLocalDateInput = (iso: string) => {
   const date = new Date(iso);
   const offset = date.getTimezoneOffset() * 60_000;
-  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+  return new Date(date.getTime() - offset).toISOString().slice(0, 10);
 };
+
+// Wybieramy same daty: wydarzenie zaczyna się o północy, a zapisy trwają do końca wybranego dnia.
+const eventDateToIso = (day: string) => new Date(`${day}T00:00:00`).toISOString();
+const closesAtToIso = (day: string) => new Date(`${day}T23:59:59`).toISOString();
 
 function defaultSections(): FormSection[] {
   return [
@@ -157,8 +162,8 @@ function emptyState(): EditorState {
       slug: '',
       title: '',
       description: '',
-      eventDate: toLocalInput(new Date(Date.now() + 30 * 86_400_000).toISOString()),
-      closesAt: toLocalInput(new Date(Date.now() + 30 * 86_400_000).toISOString()),
+      eventDate: toLocalDateInput(new Date(Date.now() + 30 * 86_400_000).toISOString()),
+      closesAt: toLocalDateInput(new Date(Date.now() + 29 * 86_400_000).toISOString()),
       capacityTotal: '',
       termsVersion: '1.0',
       privacyPolicyVersion: '1.0',
@@ -182,8 +187,8 @@ function stateFromForm(form: FormDetails): EditorState {
       slug: form.slug,
       title: form.title,
       description: form.description ?? '',
-      eventDate: toLocalInput(form.eventDate),
-      closesAt: toLocalInput(form.closesAt),
+      eventDate: toLocalDateInput(form.eventDate),
+      closesAt: toLocalDateInput(form.closesAt),
       capacityTotal: form.capacityTotal?.toString() ?? '',
       termsVersion: form.termsVersion,
       privacyPolicyVersion: form.privacyPolicyVersion,
@@ -462,8 +467,8 @@ export default function AdminFormEditor() {
       slug: draft.slug,
       title: draft.title,
       description: draft.description || null,
-      eventDate: new Date(draft.eventDate).toISOString(),
-      closesAt: new Date(draft.closesAt).toISOString(),
+      eventDate: eventDateToIso(draft.eventDate),
+      closesAt: closesAtToIso(draft.closesAt),
       capacityTotal: draft.capacityTotal === '' ? null : Number(draft.capacityTotal),
       termsVersion: draft.termsVersion,
       privacyPolicyVersion: draft.privacyPolicyVersion,
@@ -911,7 +916,7 @@ export default function AdminFormEditor() {
                 </label>
                 <input
                   id="form-event-date"
-                  type="datetime-local"
+                  type="date"
                   className="input"
                   value={draft.eventDate}
                   required
@@ -924,12 +929,17 @@ export default function AdminFormEditor() {
                 </label>
                 <input
                   id="form-closes"
-                  type="datetime-local"
+                  type="date"
                   className="input"
                   value={draft.closesAt}
+                  max={draft.eventDate || undefined}
                   required
+                  aria-describedby="form-closes-hint"
                   onChange={(e) => setField('closesAt', e.target.value)}
                 />
+                <p id="form-closes-hint" className="mt-1.5 text-xs text-slate-500">
+                  Zapisy trwają do końca wybranego dnia.
+                </p>
               </div>
               <div>
                 <label className="label" htmlFor="form-capacity">

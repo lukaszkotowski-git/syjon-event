@@ -21,3 +21,12 @@ export function maskEmail(email: string): string {
   const visible = local.slice(0, Math.min(2, local.length));
   return `${visible}${'•'.repeat(Math.max(3, local.length - visible.length))}@${domain}`;
 }
+
+/** Porównanie bez wielkości liter i polskich znaków — "Łukasz" znajdzie się po "lukasz". */
+export function normalizeSearchText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/ł/g, 'l')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}

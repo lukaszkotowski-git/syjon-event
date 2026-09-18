@@ -11,7 +11,7 @@ import type {
 import { tooManyRequests } from '../http/errors.js';
 import { prisma } from '../prisma.js';
 import { decodeTicketCode, hashScannedCode, ticketReference } from '../utils/ticket-code.js';
-import { guessDisplayName, maskEmail } from './participants.js';
+import { guessDisplayName, maskEmail, normalizeSearchText } from './participants.js';
 
 export interface StationContext {
   id: string;
@@ -186,12 +186,7 @@ export async function manualCheckIn(station: StationContext, submissionId: strin
   return checkIn(station, row.id, 'MANUAL', null);
 }
 
-const normalize = (value: string) =>
-  value
-    .toLowerCase()
-    .replace(/ł/g, 'l')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
+const normalize = normalizeSearchText;
 
 const MAX_SEARCH_RESULTS = 20;
 

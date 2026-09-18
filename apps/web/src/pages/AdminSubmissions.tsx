@@ -43,6 +43,7 @@ type Answers = Record<string, string | number | boolean>;
 
 interface SubmissionRow {
   id: string;
+  displayName: string | null;
   buyerEmail: string;
   buyerPhone: string | null;
   ticketNameSnapshot: string;
@@ -116,8 +117,8 @@ export default function AdminSubmissions() {
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState<SubmissionStatus | ''>('');
-  const [emailQuery, setEmailQuery] = useState('');
-  const debouncedEmail = useDebouncedValue(emailQuery.trim());
+  const [searchQuery, setSearchQuery] = useState('');
+  const debouncedQuery = useDebouncedValue(searchQuery.trim());
   const requestSeq = useRef(0);
 
   const [detail, setDetail] = useState<SubmissionDetail | null>(null);
@@ -133,11 +134,17 @@ export default function AdminSubmissions() {
       .catch(() => setFormTitle(null));
   }, [id]);
 
-  const load = useCallback(async () => {
-    const seq = ++requestSeq.current;
+  // Te same filtry trafiają do listy i do eksportu CSV.
+  const filterParams = useMemo(() => {
     const params = new URLSearchParams();
     if (status) params.set('status', status);
-    if (debouncedEmail) params.set('email', debouncedEmail);
+    if (debouncedQuery) params.set('q', debouncedQuery);
+    return params;
+  }, [status, debouncedQuery]);
+
+  const load = useCallback(async () => {
+    const seq = ++requestSeq.current;
+    const params = new URLSearchParams(filterParams);
     params.set('page', String(page));
     params.set('pageSize', String(PAGE_SIZE));
     setLoading(true);
@@ -156,7 +163,7 @@ export default function AdminSubmissions() {
     } finally {
       if (seq === requestSeq.current) setLoading(false);
     }
-  }, [id, status, debouncedEmail, page, toast]);
+  }, [id, filterParams, page, toast]);
 
   useEffect(() => {
     void load();
@@ -164,7 +171,7 @@ export default function AdminSubmissions() {
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedEmail]);
+  }, [debouncedQuery]);
 
   const hydrateEditor = useCallback((submission: SubmissionDetail) => {
     setDetail(submission);
@@ -292,12 +299,13 @@ export default function AdminSubmissions() {
 
   function resetFilters() {
     setStatus('');
-    setEmailQuery('');
+    setSearchQuery('');
     setPage(1);
   }
 
   const allCount = Object.values(statusCounts).reduce((sum, n) => sum + n, 0);
-  const hasFilters = Boolean(status || debouncedEmail);
+  const hasFilters = Boolean(status || debouncedQuery);
+  const csvQuery = filterParams.toString();
 
   return (
     <section className="space-y-5">
@@ -318,9 +326,13 @@ export default function AdminSubmissions() {
             <ScanLine className="h-4 w-4" aria-hidden />
             Obecność
           </Link>
-          <a className="btn-secondary" href={`/api/forms/${id}/submissions.csv`}>
+          <a
+            className="btn-secondary"
+            href={`/api/forms/${id}/submissions.csv${csvQuery ? `?${csvQuery}` : ''}`}
+            title={hasFilters ? 'Eksportuje tylko zgłoszenia pasujące do filtrów' : undefined}
+          >
             <Download className="h-4 w-4" aria-hidden />
-            Eksport CSV
+            {hasFilters ? 'Eksport CSV (filtry)' : 'Eksport CSV'}
           </a>
           <Link to={`/admin/formularze/${id}`} className="btn-secondary">
             <Pencil className="h-4 w-4" aria-hidden />
@@ -375,17 +387,17 @@ export default function AdminSubmissions() {
           />
           <input
             className="input pl-9 pr-9"
-            aria-label="Szukaj po e-mailu"
-            placeholder="Szukaj po e-mailu"
-            value={emailQuery}
-            onChange={(e) => setEmailQuery(e.target.value)}
+            aria-label="Szukaj po imieniu, e-mailu lub numerze biletu"
+            placeholder="Imię, e-mail lub nr biletu"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
           />
-          {emailQuery && (
+          {searchQuery && (
             <button
               type="button"
               aria-label="Wyczyść wyszukiwanie"
               className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-              onClick={() => setEmailQuery('')}
+              onClick={() => setSearchQuery('')}
             >
               <X className="h-4 w-4" aria-hidden />
             </button>
@@ -396,7 +408,35 @@ export default function AdminSubmissions() {
       <div className="card p-0">
         {/* Paginacja poza przewijanym kontenerem — inaczej podpowiedzi przycisków rozpychają tabelę w poziomie. */}
         <div className={`overflow-x-auto rounded-t-2xl transition-opacity ${loading && rows ? 'opacity-60' : ''}`}>
-          <table className="w-full text-sm">
+          {/* Na telefonie karty zamiast tabeli — bez przewijania w bok. */}
+          <ul className="divide-y divide-slate-100 md:hidden">
+            {rows?.map((row) => (
+              <li key={row.id}>
+                <button
+                  type="button"
+                  onClick={() => openSubmission(row.id)}
+                  className={`flex w-full items-start justify-between gap-3 px-4 py-3.5 text-left text-sm transition active:bg-brand-50 ${
+                    selectedId === row.id ? 'bg-brand-50' : ''
+                  }`}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium text-slate-900">{row.displayName ?? row.buyerEmail}</span>
+                    {row.displayName && <span className="block truncate text-xs text-slate-500">{row.buyerEmail}</span>}
+                    <span className="mt-1 block text-xs text-slate-500">
+                      {row.ticketNameSnapshot} · {row.ticketPriceCents === 0 ? 'Bezpłatny' : formatPln(row.ticketPriceCents)}
+                    </span>
+                    <span className="mt-0.5 block text-xs text-slate-400">{formatDateTime(row.createdAt)}</span>
+                  </span>
+                  <span className="flex shrink-0 items-center gap-1.5">
+                    <StatusBadge meta={SUBMISSION_STATUS[row.status]} />
+                    <ChevronRight className="h-4 w-4 text-slate-300" aria-hidden />
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+
+          <table className="hidden w-full text-sm md:table">
             <thead className="bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-4 py-3">Data</th>
@@ -427,13 +467,17 @@ export default function AdminSubmissions() {
                 >
                   <td className="whitespace-nowrap px-4 py-3 text-slate-600">{formatDateTime(row.createdAt)}</td>
                   <td className="px-4 py-3">
+                    {row.displayName && <p className="font-medium text-slate-900">{row.displayName}</p>}
                     <div className="flex items-center gap-1.5">
-                      <span className="font-medium text-slate-900">{row.buyerEmail}</span>
+                      <span className={row.displayName ? 'text-slate-600' : 'font-medium text-slate-900'}>
+                        {row.buyerEmail}
+                      </span>
                       <IconButton
                         icon={Copy}
                         label="Kopiuj e-mail"
                         size="sm"
-                        className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                        // Na ekranach dotykowych nie ma hovera — tam przycisk jest widoczny zawsze.
+                        className="opacity-0 focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
                         onClick={(e) => {
                           e.stopPropagation();
                           void copyEmail(row.buyerEmail);

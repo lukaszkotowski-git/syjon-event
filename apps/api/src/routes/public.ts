@@ -288,6 +288,7 @@ publicRouter.get(
       },
       formTitle: submissionRecord.form.title,
       formSlug: submissionRecord.form.slug,
+      eventDate: submissionRecord.form.eventDate.toISOString(),
       confirmationEmailSent: fresh.confirmationEmailSentAt !== null,
       ticketReference: fresh.status === 'PAID' ? ticketReference(fresh.id) : null,
       checkedInAt: fresh.checkedInAt?.toISOString() ?? null,

@@ -95,7 +95,7 @@ export default function Menu({ trigger, triggerClassName = 'btn-secondary', trig
                 }`}
               >
                 {Icon && <Icon className="h-4 w-4 shrink-0 opacity-80" aria-hidden />}
-                <span className="flex-1">{item.label}</span>
+                <span className="flex-1 whitespace-nowrap">{item.label}</span>
                 {item.hint && <span className="text-xs text-slate-400">{item.hint}</span>}
               </button>
             );

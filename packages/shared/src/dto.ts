@@ -268,6 +268,7 @@ export interface SubmissionStatusDto {
   paymentResultContent: PaymentResultContentDto;
   formTitle: string;
   formSlug: string;
+  eventDate: string;
   confirmationEmailSent: boolean;
   /** Numer biletu — obecny tylko dla opłaconego zgłoszenia, wtedy dostępny jest też obraz QR. */
   ticketReference: string | null;

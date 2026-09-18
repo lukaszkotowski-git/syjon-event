@@ -22,6 +22,7 @@ import { asyncHandler } from '../http/async-handler.js';
 import { badRequest, conflict, notFound } from '../http/errors.js';
 import { prisma } from '../prisma.js';
 import { countOccupancy, isUniqueViolation } from '../services/capacity.js';
+import { guessDisplayName, normalizeSearchText } from '../services/participants.js';
 import { parseFormSchema } from '../services/registration.js';
 import { imageUpload, UPLOAD_DIR, uploadPublicUrl } from '../uploads.js';
 import { toCsv } from '../utils/csv.js';
@@ -462,12 +463,38 @@ async function submissionDetail(formId: string, submissionId: string) {
   };
 }
 
-const submissionQuery = z.object({
+const submissionFilterQuery = z.object({
   status: z.enum(['RESERVED', 'PAID', 'EXPIRED', 'CANCELLED']).optional(),
-  email: z.string().trim().min(1).max(320).optional(),
+  q: z.string().trim().min(1).max(320).optional(),
+});
+
+const submissionQuery = submissionFilterQuery.extend({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(200).default(50),
 });
+
+/**
+ * Warunek wyszukiwania po e-mailu, imieniu/nazwisku lub numerze biletu. Imię leży w JSON-ie
+ * odpowiedzi, a numer biletu to prefiks id — dopasowujemy w pamięci i zwracamy listę id.
+ */
+async function submissionSearchWhere(formId: string, q: string | undefined) {
+  if (!q) return { formId };
+  const rows = await prisma.submission.findMany({
+    where: { formId },
+    select: { id: true, buyerEmail: true, schemaSnapshotJson: true, payloadJson: true },
+  });
+  const needle = normalizeSearchText(q);
+  const referenceNeedle = q.toUpperCase();
+  const ids = rows
+    .filter(
+      (row) =>
+        normalizeSearchText(row.buyerEmail).includes(needle) ||
+        normalizeSearchText(guessDisplayName(row.schemaSnapshotJson, row.payloadJson) ?? '').includes(needle) ||
+        ticketReference(row.id).startsWith(referenceNeedle),
+    )
+    .map((row) => row.id);
+  return { formId, id: { in: ids } };
+}
 
 adminFormsRouter.get(
   '/:id/submissions',
@@ -477,10 +504,7 @@ adminFormsRouter.get(
 
     // Liczniki zakładek statusów i przychód liczymy bez filtra statusu (ale z wyszukiwaniem),
     // żeby zakładki pokazywały, ile wyników jest w każdej z nich.
-    const baseWhere = {
-      formId: form.id,
-      ...(query.email ? { buyerEmail: { contains: query.email.toLowerCase() } } : {}),
-    };
+    const baseWhere = await submissionSearchWhere(form.id, query.q);
     const where = { ...baseWhere, ...(query.status ? { status: query.status } : {}) };
 
     const [total, submissions, grouped] = await Promise.all([
@@ -502,6 +526,8 @@ adminFormsRouter.get(
           status: true,
           reservationExpiresAt: true,
           createdAt: true,
+          schemaSnapshotJson: true,
+          payloadJson: true,
         },
       }),
       prisma.submission.groupBy({
@@ -523,7 +549,10 @@ adminFormsRouter.get(
       total,
       page: query.page,
       pageSize: query.pageSize,
-      submissions,
+      submissions: submissions.map(({ schemaSnapshotJson, payloadJson, ...row }) => ({
+        ...row,
+        displayName: guessDisplayName(schemaSnapshotJson, payloadJson),
+      })),
       statusCounts,
       paidRevenueCents,
     });
@@ -534,8 +563,11 @@ adminFormsRouter.get(
   '/:id/submissions.csv',
   asyncHandler(async (req, res) => {
     const form = await getFormOr404(req.params.id as string);
+    // Eksport respektuje filtry z listy zgłoszeń (zakładka statusu i wyszukiwanie).
+    const query = submissionFilterQuery.parse(req.query);
+    const baseWhere = await submissionSearchWhere(form.id, query.q);
     const submissions = await prisma.submission.findMany({
-      where: { formId: form.id },
+      where: { ...baseWhere, ...(query.status ? { status: query.status } : {}) },
       orderBy: { createdAt: 'asc' },
     });
 

@@ -42,7 +42,6 @@ export function emailTemplateValues(
     wydarzenie: form.title,
     data_wydarzenia: new Intl.DateTimeFormat('pl-PL', {
       dateStyle: 'long',
-      timeStyle: 'short',
       timeZone: 'Europe/Warsaw',
     }).format(form.eventDate),
     bilet: submission.ticketNameSnapshot,

@@ -75,7 +75,7 @@ describe('szablon e-maila', () => {
     // Intl wstawia twarde spacje (np. w "49,00 zł") — porównujemy po ich znormalizowaniu.
     assert.equal(
       rendered.replace(/[\u00a0\u202f]/g, ' '),
-      'Jan Kowalski | Jan Kowalski | Wege | Wege | Tak | 49,00 zł | 3F9A2C1B | Konferencja Syjon | 11 października 2026 18:00',
+      'Jan Kowalski | Jan Kowalski | Wege | Wege | Tak | 49,00 zł | 3F9A2C1B | Konferencja Syjon | 11 października 2026',
     );
   });
 
