@@ -4,6 +4,7 @@ import {
   CircleCheck,
   CircleX,
   Clock,
+  Coins,
   Globe,
   Hourglass,
   Loader,
@@ -12,7 +13,7 @@ import {
 } from 'lucide-react';
 
 export type FormStatus = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
-export type SubmissionStatus = 'RESERVED' | 'PAID' | 'EXPIRED' | 'CANCELLED';
+export type SubmissionStatus = 'RESERVED' | 'DEPOSIT_PAID' | 'PAID' | 'EXPIRED' | 'CANCELLED';
 export type PaymentStatus = 'NEW' | 'PENDING' | 'CONFIRMED' | 'REJECTED' | 'ERROR' | 'ABANDONED' | 'EXPIRED';
 
 export interface StatusMeta {
@@ -37,6 +38,7 @@ export const FORM_STATUS: Record<FormStatus, StatusMeta> = {
 
 export const SUBMISSION_STATUS: Record<SubmissionStatus, StatusMeta> = {
   PAID: { label: 'Opłacone', icon: CircleCheck, className: tone.success },
+  DEPOSIT_PAID: { label: 'Zaliczka', icon: Coins, className: tone.warning },
   RESERVED: { label: 'Rezerwacja', icon: Hourglass, className: tone.info },
   EXPIRED: { label: 'Wygasłe', icon: Clock, className: tone.neutral },
   CANCELLED: { label: 'Anulowane', icon: Ban, className: tone.warning },

@@ -31,6 +31,9 @@ const participantSelect = {
   schemaSnapshotJson: true,
   ticketNameSnapshot: true,
   ticketNonce: true,
+  ticketPriceCents: true,
+  paidCents: true,
+  currency: true,
   checkedInAt: true,
   checkedInStation: { select: { name: true } },
 } satisfies Prisma.SubmissionSelect;
@@ -47,8 +50,15 @@ export function toParticipantDto(row: ParticipantRow): CheckInParticipantDto {
     ticketReference: ticketReference(row.id),
     checkedInAt: row.checkedInAt?.toISOString() ?? null,
     checkedInStationName: row.checkedInStation?.name ?? null,
+    balanceDueCents: row.status === 'DEPOSIT_PAID' ? Math.max(0, row.ticketPriceCents - row.paidCents) : null,
   };
 }
+
+const plnFormat = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
+const formatPln = (cents: number) => plnFormat.format(cents / 100);
+
+/** Powód odmowy dla zgłoszenia, które nie jest opłacone w całości. */
+const unpaidReason = (row: ParticipantRow): CheckInReason => (row.status === 'DEPOSIT_PAID' ? 'BALANCE_DUE' : 'NOT_PAID');
 
 export async function stationStats(formId: string): Promise<StationStatsDto> {
   const [total, checkedIn] = await Promise.all([
@@ -70,9 +80,12 @@ function resultMessage(result: CheckInResult, reason: CheckInReason | null, part
       return when ? `Pierwsze wejście o ${when}${where ? ` · ${where}` : ''}` : 'Ten bilet został już zameldowany';
     }
     case 'EXPIRED':
-      return reason === 'REISSUED'
-        ? 'Kod unieważniony — uczestnik ma nowszy kod QR w e-mailu'
-        : 'Bilet nieważny — zgłoszenie nie jest opłacone';
+      if (reason === 'REISSUED') return 'Kod unieważniony — uczestnik ma nowszy kod QR w e-mailu';
+      if (reason === 'BALANCE_DUE') {
+        const due = participant?.balanceDueCents;
+        return `Wpłacona tylko zaliczka${due ? ` — do dopłaty ${formatPln(due)}` : ''}. Skieruj do organizatora`;
+      }
+      return 'Bilet nieważny — zgłoszenie nie jest opłacone';
     case 'INVALID':
       if (reason === 'WRONG_EVENT') return 'Bilet na inne wydarzenie';
       if (reason === 'MALFORMED') return 'To nie jest kod biletu';
@@ -133,7 +146,7 @@ async function checkIn(
     let result: CheckInResult = 'SUCCESS';
     let reason: CheckInReason | null = null;
     if (updated.count === 0) {
-      [result, reason] = row.status !== 'PAID' ? ['EXPIRED', 'NOT_PAID'] : ['DUPLICATE', 'ALREADY_CHECKED_IN'];
+      [result, reason] = row.status !== 'PAID' ? ['EXPIRED', unpaidReason(row)] : ['DUPLICATE', 'ALREADY_CHECKED_IN'];
     }
     await recordAttempt(tx, station, { method, result, reason, submissionId, codeHash });
     return { result, reason, row };
@@ -173,7 +186,7 @@ export async function scanTicket(station: StationContext, rawCode: string): Prom
   if (!row) return reject(station, 'QR', 'INVALID', 'UNKNOWN_TICKET', null, codeHash);
   // Danych uczestnika innego wydarzenia nie pokazujemy obsłudze tego stanowiska.
   if (row.formId !== station.formId) return reject(station, 'QR', 'INVALID', 'WRONG_EVENT', null, codeHash);
-  if (row.status !== 'PAID') return reject(station, 'QR', 'EXPIRED', 'NOT_PAID', row, codeHash);
+  if (row.status !== 'PAID') return reject(station, 'QR', 'EXPIRED', unpaidReason(row), row, codeHash);
   if (row.ticketNonce !== decoded.nonce) return reject(station, 'QR', 'EXPIRED', 'REISSUED', row, codeHash);
 
   return checkIn(station, row.id, 'QR', codeHash);
@@ -182,7 +195,7 @@ export async function scanTicket(station: StationContext, rawCode: string): Prom
 export async function manualCheckIn(station: StationContext, submissionId: string): Promise<ScanResultDto> {
   const row = await prisma.submission.findUnique({ where: { id: submissionId }, select: participantSelect });
   if (!row || row.formId !== station.formId) return reject(station, 'MANUAL', 'INVALID', 'UNKNOWN_TICKET', null, null);
-  if (row.status !== 'PAID') return reject(station, 'MANUAL', 'EXPIRED', 'NOT_PAID', row, null);
+  if (row.status !== 'PAID') return reject(station, 'MANUAL', 'EXPIRED', unpaidReason(row), row, null);
   return checkIn(station, row.id, 'MANUAL', null);
 }
 
@@ -190,10 +203,13 @@ const normalize = normalizeSearchText;
 
 const MAX_SEARCH_RESULTS = 20;
 
-/** Wyszukiwanie po imieniu/nazwisku, e-mailu lub numerze biletu. Imię leży w JSON-ie odpowiedzi, więc filtrujemy w pamięci. */
+/**
+ * Wyszukiwanie po imieniu/nazwisku, e-mailu lub numerze biletu. Imię leży w JSON-ie odpowiedzi, więc filtrujemy w pamięci.
+ * Osoby z samą zaliczką też się pokazują — obsługa wejścia widzi, że muszą najpierw dopłacić.
+ */
 export async function searchParticipants(formId: string, query: string): Promise<CheckInParticipantDto[]> {
   const rows = await prisma.submission.findMany({
-    where: { formId, status: 'PAID' },
+    where: { formId, status: { in: ['PAID', 'DEPOSIT_PAID'] } },
     select: participantSelect,
     orderBy: { createdAt: 'asc' },
   });

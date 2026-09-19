@@ -1,6 +1,7 @@
 import type { Form, Submission } from '@prisma/client';
 import { flattenSections, normalizeVariableName, renderTemplate } from '@syjonevent/shared';
 import { ticketReference } from '../utils/ticket-code.js';
+import { formatDueDate } from './mailer.js';
 import { guessDisplayName } from './participants.js';
 import { parseFormSchema } from './registration.js';
 
@@ -56,6 +57,26 @@ export function emailTemplateValues(
     values[normalizeVariableName(field.label)] ??= answerText(payload[field.key]);
   }
   return values;
+}
+
+/** Tytuł i treść e-maila po zaliczce — te same znaczniki co w potwierdzeniu plus kwota, termin i link dopłaty. */
+export function renderDepositEmailContent(
+  form: Pick<Form, 'title' | 'eventDate' | 'location' | 'balanceDueAt' | 'depositEmailTitle' | 'depositEmailBody'>,
+  submission: Parameters<typeof emailTemplateValues>[0] & Pick<Submission, 'paidCents'>,
+  balanceUrl: string,
+): { customTitle: string | null; customBody: string | null } {
+  if (!form.depositEmailTitle && !form.depositEmailBody) return { customTitle: null, customBody: null };
+  const values = {
+    ...emailTemplateValues(submission, form),
+    kwota_zaliczki: formatAmount(submission.paidCents, submission.currency),
+    kwota_doplaty: formatAmount(submission.ticketPriceCents - submission.paidCents, submission.currency),
+    termin_doplaty: form.balanceDueAt ? formatDueDate(form.balanceDueAt) : '',
+    link_doplaty: balanceUrl,
+  };
+  return {
+    customTitle: form.depositEmailTitle ? renderTemplate(form.depositEmailTitle, values) : null,
+    customBody: form.depositEmailBody ? renderTemplate(form.depositEmailBody, values) : null,
+  };
 }
 
 /** Tytuł i treść e-maila od organizatora z podstawionymi znacznikami; null = tekst domyślny. */

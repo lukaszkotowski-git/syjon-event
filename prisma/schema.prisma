@@ -15,6 +15,8 @@ enum FormStatus {
 
 enum SubmissionStatus {
   RESERVED
+  // Wpłacona zaliczka — miejsce zajęte na stałe, bilet QR dopiero po dopłacie reszty.
+  DEPOSIT_PAID
   PAID
   EXPIRED
   CANCELLED
@@ -28,6 +30,13 @@ enum PaymentStatus {
   ERROR
   ABANDONED
   EXPIRED
+}
+
+// FULL — cała kwota naraz; DEPOSIT — zaliczka; BALANCE — dopłata reszty po zaliczce.
+enum PaymentKind {
+  FULL
+  DEPOSIT
+  BALANCE
 }
 
 enum DiscountType {
@@ -106,6 +115,11 @@ model Form {
   paymentErrorBody          String?    @map("payment_error_body")
   confirmationEmailTitle    String?    @map("confirmation_email_title")
   confirmationEmailBody     String?    @map("confirmation_email_body")
+  // Termin dopłaty reszty dla zgłoszeń opłaconych zaliczką. Wymagany, gdy któryś bilet ma zaliczkę.
+  balanceDueAt              DateTime?  @map("balance_due_at") @db.Timestamptz(3)
+  // Treść e-maila po wpłacie zaliczki. NULL = tekst domyślny aplikacji.
+  depositEmailTitle         String?    @map("deposit_email_title")
+  depositEmailBody          String?    @map("deposit_email_body")
   backgroundImageDesktopUrl String?    @map("background_image_desktop_url")
   backgroundImageMobileUrl  String?    @map("background_image_mobile_url")
   createdAt                 DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -131,6 +145,8 @@ model TicketType {
   formId     String   @map("form_id") @db.Uuid
   name       String
   priceCents Int      @map("price_cents")
+  // Kwota zaliczki; NULL = bilet płatny tylko w całości.
+  depositCents Int?   @map("deposit_cents")
   currency   String   @default("PLN") @db.Char(3)
   capacity   Int?
   sortOrder  Int      @default(0) @map("sort_order")
@@ -173,6 +189,10 @@ model Submission {
   discountCodeId               String?          @map("discount_code_id") @db.Uuid
   discountCodeSnapshot         String?          @map("discount_code_snapshot")
   discountAmountCents          Int              @default(0) @map("discount_amount_cents")
+  // Zaliczka wybrana przy rejestracji (NULL = płatność w całości). ticket_price_cents to zawsze pełna kwota.
+  depositCents                 Int?             @map("deposit_cents")
+  // Suma faktycznie wpłaconych kwot (Paynow i wpłaty odnotowane ręcznie przez admina).
+  paidCents                    Int              @default(0) @map("paid_cents")
   buyerEmail                   String           @map("buyer_email")
   buyerPhone                   String?          @map("buyer_phone")
   buyerAddress                 String?          @map("buyer_address")
@@ -186,6 +206,9 @@ model Submission {
   status                       SubmissionStatus @map("status")
   reservationExpiresAt         DateTime?        @map("reservation_expires_at") @db.Timestamptz(3)
   publicTokenHash              String           @unique @map("public_token_hash")
+  // Drugi token dostępu — do linku dopłaty w e-mailu wysyłanym z webhooka, gdy jawny publicToken już nie istnieje.
+  emailTokenHash               String?          @unique @map("email_token_hash")
+  depositEmailSentAt           DateTime?        @map("deposit_email_sent_at") @db.Timestamptz(3)
   confirmationEmailSentAt      DateTime?        @map("confirmation_email_sent_at") @db.Timestamptz(3)
   // Nonce kodu QR biletu (w QR jest podpisany HMAC-iem razem z id). NULL = bilet jeszcze nie wystawiony;
   // nowy nonce unieważnia poprzedni QR.
@@ -275,7 +298,9 @@ model CheckInAttempt {
 model Payment {
   id                  String        @id @default(uuid()) @db.Uuid
   submissionId        String        @map("submission_id") @db.Uuid
+  // "paynow" albo "manual" — wpłata odnotowana ręcznie przez admina (gotówka, przelew).
   provider            String        @default("paynow")
+  kind                PaymentKind   @default(FULL)
   providerPaymentId   String?       @unique @map("provider_payment_id")
   idempotencyKey      String        @unique @map("idempotency_key")
   amountCents         Int           @map("amount_cents")

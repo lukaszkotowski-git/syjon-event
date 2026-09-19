@@ -1,11 +1,13 @@
 import { z } from 'zod';
 import {
   CURRENCY,
+  type SubmissionStatus,
   MAX_DESCRIPTION_LENGTH,
   MAX_LOCATION_LENGTH,
   MAX_TICKET_TYPES_PER_FORM,
   MIN_PAID_AMOUNT_CENTS,
 } from './constants.js';
+import { depositError, PAYMENT_OPTIONS } from './deposits.js';
 import { formSchemaJson } from './fields.js';
 import { normalizePlPhone } from './phone.js';
 
@@ -43,6 +45,9 @@ export const createFormRequest = z.object({
   paymentErrorBody: z.string().trim().max(2000).nullish(),
   confirmationEmailTitle: z.string().trim().max(200).nullish(),
   confirmationEmailBody: z.string().trim().max(2000).nullish(),
+  balanceDueAt: z.string().datetime({ offset: true }).nullish(),
+  depositEmailTitle: z.string().trim().max(200).nullish(),
+  depositEmailBody: z.string().trim().max(2000).nullish(),
   schemaJson: formSchemaJson.optional(),
 });
 export type CreateFormRequest = z.infer<typeof createFormRequest>;
@@ -54,6 +59,7 @@ export const ticketTypeInput = z
   .object({
     name: z.string().trim().min(1).max(120),
     priceCents: z.number().int().min(0).max(100_000_00),
+    depositCents: z.number().int().positive().nullish(),
     capacity: z.number().int().positive().nullish(),
     sortOrder: z.number().int().min(0).max(MAX_TICKET_TYPES_PER_FORM).default(0),
     isActive: z.boolean().default(true),
@@ -66,6 +72,8 @@ export const ticketTypeInput = z
         message: `Bilet płatny musi kosztować minimum ${MIN_PAID_AMOUNT_CENTS} groszy (Paynow) albo być darmowy (0).`,
       });
     }
+    const deposit = depositError(value.priceCents, value.depositCents);
+    if (deposit) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['depositCents'], message: deposit });
   });
 export type TicketTypeInput = z.infer<typeof ticketTypeInput>;
 
@@ -73,6 +81,8 @@ export const updateTicketTypeRequest = z
   .object({
     name: z.string().trim().min(1).max(120).optional(),
     priceCents: z.number().int().min(0).max(100_000_00).optional(),
+    // Poprawność względem ceny sprawdza API — tu cena może nie przyjść w tym samym żądaniu.
+    depositCents: z.number().int().positive().nullish(),
     capacity: z.number().int().positive().nullish(),
     sortOrder: z.number().int().min(0).max(MAX_TICKET_TYPES_PER_FORM).optional(),
     isActive: z.boolean().optional(),
@@ -140,6 +150,8 @@ export const createSubmissionRequest = z.object({
   answers: z.record(z.unknown()).default({}),
   consents: z.record(z.boolean()).default({}),
   discountCode: z.string().trim().min(1).max(40).optional(),
+  /** DEPOSIT = najpierw zaliczka; ignorowane, gdy bilet nie ma zaliczki. */
+  paymentOption: z.enum(PAYMENT_OPTIONS).default('FULL'),
   acceptTerms: z.literal(true, { errorMap: () => ({ message: 'Akceptacja regulaminu jest wymagana' }) }),
   acceptPrivacy: z.literal(true, {
     errorMap: () => ({ message: 'Akceptacja polityki prywatności jest wymagana' }),
@@ -162,6 +174,8 @@ export interface PublicTicketTypeDto {
   id: string;
   name: string;
   priceCents: number;
+  /** Zaliczka dostępna przy rejestracji; null = tylko płatność w całości. */
+  depositCents: number | null;
   currency: typeof CURRENCY;
   soldOut: boolean;
 }
@@ -191,6 +205,8 @@ export interface PublicFormDto {
   schemaJson: z.infer<typeof formSchemaJson>;
   ticketTypes: PublicTicketTypeDto[];
   hasDiscountCodes: boolean;
+  /** Termin dopłaty reszty po zaliczce. */
+  balanceDueAt: string | null;
   soldOut: boolean;
   backgroundImageDesktopUrl: string | null;
   backgroundImageMobileUrl: string | null;
@@ -205,6 +221,16 @@ export interface CreateSubmissionResponse {
   status: 'RESERVED' | 'PAID';
 }
 
+/** Dopłata po zaliczce — widoczna na stronie zgłoszenia. */
+export interface BalanceInfoDto {
+  depositCents: number;
+  paidCents: number;
+  balanceCents: number;
+  dueAt: string | null;
+  /** false po terminie — wtedy dopłatę przyjmuje już tylko organizator. */
+  canPayOnline: boolean;
+}
+
 /** Treści strony powrotu z płatności ustawione w formularzu; null = tekst domyślny. */
 export interface PaymentResultContentDto {
   successTitle: string | null;
@@ -216,7 +242,7 @@ export interface PaymentResultContentDto {
 /* -------------------------------- dashboard -------------------------------- */
 
 export interface DashboardStatusCount {
-  status: 'RESERVED' | 'PAID' | 'EXPIRED' | 'CANCELLED';
+  status: SubmissionStatus;
   count: number;
 }
 
@@ -226,6 +252,7 @@ export interface DashboardEventStat {
   status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
   submissionCount: number;
   paidCount: number;
+  depositPaidCount: number;
   revenueCents: number;
 }
 
@@ -234,7 +261,7 @@ export interface DashboardRecentRegistration {
   displayName: string | null;
   buyerEmail: string;
   formTitle: string;
-  status: 'RESERVED' | 'PAID' | 'EXPIRED' | 'CANCELLED';
+  status: SubmissionStatus;
   createdAt: string;
 }
 
@@ -242,6 +269,8 @@ export interface DashboardDto {
   totals: {
     submissions: number;
     paid: number;
+    depositPaid: number;
+    outstandingCents: number;
     reserved: number;
     expired: number;
     cancelled: number;
@@ -257,13 +286,17 @@ export interface DashboardDto {
 
 export interface SubmissionStatusDto {
   submissionId: string;
-  status: 'RESERVED' | 'PAID' | 'EXPIRED' | 'CANCELLED';
+  status: SubmissionStatus;
   ticketName: string;
   amountCents: number;
   currency: string;
   discountCodeSnapshot: string | null;
   discountAmountCents: number;
   reservationExpiresAt: string | null;
+  /** Kwota bieżącej płatności: zaliczka przy rezerwacji z zaliczką, pozostała reszta po niej. */
+  amountDueCents: number;
+  /** Obecne, gdy zgłoszenie jest (lub było) opłacane zaliczką. */
+  balance: BalanceInfoDto | null;
   lastPayment: {
     status: string;
     redirectUrl: string | null;
@@ -333,7 +366,7 @@ export interface AuditLogEntryDto {
 
 /* --------------------------- wiadomości do uczestników -------------------------- */
 
-export const MESSAGE_AUDIENCE_STATUSES = ['PAID', 'RESERVED'] as const;
+export const MESSAGE_AUDIENCE_STATUSES = ['PAID', 'DEPOSIT_PAID', 'RESERVED'] as const;
 
 export const messageAudience = z.object({
   statuses: z.array(z.enum(MESSAGE_AUDIENCE_STATUSES)).min(1, 'Wybierz, do kogo wysłać wiadomość'),
@@ -386,6 +419,13 @@ export interface ReportAnswerSummaryDto {
 export interface EventReportDto {
   form: { id: string; title: string; eventDate: string; location: string | null };
   generatedAt: string;
+  finance: {
+    /** Suma faktycznych wpłat (Paynow i wpłaty odnotowane ręcznie). */
+    receivedCents: number;
+    /** Reszta do dopłaty po zaliczkach. */
+    outstandingCents: number;
+    depositPaidCount: number;
+  };
   participants: ReportParticipantDto[];
   answerSummaries: ReportAnswerSummaryDto[];
   consentSummaries: { key: string; label: string; accepted: number; total: number }[];

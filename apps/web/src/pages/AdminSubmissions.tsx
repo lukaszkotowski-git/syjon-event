@@ -3,6 +3,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
   ChevronRight,
+  Coins,
   Copy,
   Download,
   Inbox,
@@ -55,6 +56,8 @@ interface SubmissionRow {
   currency: string;
   discountCodeSnapshot: string | null;
   discountAmountCents: number;
+  depositCents: number | null;
+  paidCents: number;
   status: SubmissionStatus;
   reservationExpiresAt: string | null;
   createdAt: string;
@@ -63,9 +66,17 @@ interface SubmissionRow {
 interface PaymentAttempt {
   id: string;
   status: PaymentStatus;
+  kind: 'FULL' | 'DEPOSIT' | 'BALANCE';
+  provider: string;
   amountCents: number;
   createdAt: string;
 }
+
+const PAYMENT_KIND_LABEL: Record<PaymentAttempt['kind'], string | null> = {
+  FULL: null,
+  DEPOSIT: 'Zaliczka',
+  BALANCE: 'Dopłata',
+};
 
 interface SubmissionDetail {
   id: string;
@@ -76,12 +87,15 @@ interface SubmissionDetail {
   ticketPriceCents: number;
   discountCodeSnapshot: string | null;
   discountAmountCents: number;
+  depositCents: number | null;
+  paidCents: number;
   status: SubmissionStatus;
   payloadJson: Answers;
   schemaSnapshotJson: { sections: FormSection[] };
   consentsJson: ConsentRecord[];
   reservationExpiresAt: string | null;
   confirmationEmailSentAt: string | null;
+  depositEmailSentAt: string | null;
   ticketIssued: boolean;
   ticketReference: string;
   checkedInAt: string | null;
@@ -95,17 +109,28 @@ interface ListResponse {
   total: number;
   statusCounts: Record<SubmissionStatus, number>;
   paidRevenueCents: number;
+  outstandingCents: number;
 }
 
 const STATUS_TABS: { value: SubmissionStatus | ''; label: string }[] = [
   { value: '', label: 'Wszystkie' },
   { value: 'PAID', label: SUBMISSION_STATUS.PAID.label },
+  { value: 'DEPOSIT_PAID', label: 'Zaliczki' },
   { value: 'RESERVED', label: 'Rezerwacje' },
   { value: 'EXPIRED', label: SUBMISSION_STATUS.EXPIRED.label },
   { value: 'CANCELLED', label: SUBMISSION_STATUS.CANCELLED.label },
 ];
 
-const EMPTY_COUNTS: Record<SubmissionStatus, number> = { RESERVED: 0, PAID: 0, EXPIRED: 0, CANCELLED: 0 };
+const EMPTY_COUNTS: Record<SubmissionStatus, number> = {
+  RESERVED: 0,
+  DEPOSIT_PAID: 0,
+  PAID: 0,
+  EXPIRED: 0,
+  CANCELLED: 0,
+};
+
+/** Reszta do dopłaty po zaliczce. */
+const balanceDue = (row: { ticketPriceCents: number; paidCents: number }) => Math.max(0, row.ticketPriceCents - row.paidCents);
 
 export default function AdminSubmissions() {
   const { id } = useParams();
@@ -120,6 +145,7 @@ export default function AdminSubmissions() {
   const [total, setTotal] = useState(0);
   const [statusCounts, setStatusCounts] = useState(EMPTY_COUNTS);
   const [paidRevenueCents, setPaidRevenueCents] = useState(0);
+  const [outstandingCents, setOutstandingCents] = useState(0);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState<SubmissionStatus | ''>('');
@@ -162,6 +188,7 @@ export default function AdminSubmissions() {
       setTotal(data.total);
       setStatusCounts(data.statusCounts ?? EMPTY_COUNTS);
       setPaidRevenueCents(data.paidRevenueCents ?? 0);
+      setOutstandingCents(data.outstandingCents ?? 0);
     } catch (error) {
       if (seq === requestSeq.current) {
         toast.error(error instanceof ApiError ? error.message : 'Nie udało się pobrać zgłoszeń');
@@ -303,6 +330,44 @@ export default function AdminSubmissions() {
     }
   }
 
+  async function recordBalancePayment() {
+    if (!detail) return;
+    const ok = await confirm({
+      title: `Odnotować dopłatę ${formatPln(balanceDue(detail))}?`,
+      description:
+        'Użyj, gdy uczestnik dopłacił gotówką lub przelewem. Zgłoszenie stanie się opłacone, a uczestnik dostanie e-mail z biletem QR.',
+      confirmLabel: 'Odnotuj dopłatę',
+    });
+    if (!ok) return;
+    setTicketBusy(true);
+    try {
+      await api.post(`/api/forms/${id}/submissions/${detail.id}/balance-payment`);
+      // Odpowiedź POST nie ma historii płatności — pobieramy pełne szczegóły od nowa.
+      const data = await api.get<{ submission: SubmissionDetail }>(`/api/forms/${id}/submissions/${detail.id}`);
+      hydrateEditor(data.submission);
+      toast.success('Odnotowano dopłatę — bilet wysłany do uczestnika');
+      void load();
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : 'Nie udało się odnotować dopłaty');
+    } finally {
+      setTicketBusy(false);
+    }
+  }
+
+  async function resendDepositEmail() {
+    if (!detail) return;
+    setTicketBusy(true);
+    try {
+      await api.post(`/api/forms/${id}/submissions/${detail.id}/deposit-email`);
+      toast.success(`Wysłano link do dopłaty na ${detail.buyerEmail}`);
+      setDetail({ ...detail, depositEmailSentAt: new Date().toISOString() });
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : 'Nie udało się wysłać e-maila');
+    } finally {
+      setTicketBusy(false);
+    }
+  }
+
   function resetFilters() {
     setStatus('');
     setSearchQuery('');
@@ -358,7 +423,10 @@ export default function AdminSubmissions() {
       <div className="card space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div role="tablist" aria-label="Status zgłoszenia" className="-mx-1 flex gap-1 overflow-x-auto px-1">
-            {STATUS_TABS.map((tab) => {
+            {/* Zakładka „Zaliczki” pojawia się dopiero, gdy w wydarzeniu jest jakaś wpłacona zaliczka. */}
+            {STATUS_TABS.filter(
+              (tab) => tab.value !== 'DEPOSIT_PAID' || statusCounts.DEPOSIT_PAID > 0 || status === 'DEPOSIT_PAID',
+            ).map((tab) => {
               const active = status === tab.value;
               const count = tab.value ? statusCounts[tab.value] : allCount;
               return (
@@ -387,11 +455,20 @@ export default function AdminSubmissions() {
               );
             })}
           </div>
-          <p className="inline-flex items-center gap-2 text-sm text-slate-500">
-            <Wallet className="h-4 w-4 text-brand-600" aria-hidden />
-            Przychód z opłaconych:
-            <span className="font-semibold text-slate-900">{formatPln(paidRevenueCents)}</span>
-          </p>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-500">
+            <p className="inline-flex items-center gap-2">
+              <Wallet className="h-4 w-4 text-brand-600" aria-hidden />
+              Wpłaty:
+              <span className="font-semibold text-slate-900">{formatPln(paidRevenueCents)}</span>
+            </p>
+            {outstandingCents > 0 && (
+              <p className="inline-flex items-center gap-2">
+                <Coins className="h-4 w-4 text-amber-600" aria-hidden />
+                Do dopłaty:
+                <span className="font-semibold text-slate-900">{formatPln(outstandingCents)}</span>
+              </p>
+            )}
+          </div>
         </div>
 
         <div className="relative max-w-sm">
@@ -438,6 +515,7 @@ export default function AdminSubmissions() {
                     {row.displayName && <span className="block truncate text-xs text-slate-500">{row.buyerEmail}</span>}
                     <span className="mt-1 block text-xs text-slate-500">
                       {row.ticketNameSnapshot} · {row.ticketPriceCents === 0 ? 'Bezpłatny' : formatPln(row.ticketPriceCents)}
+                      {row.status === 'DEPOSIT_PAID' && ` · do dopłaty ${formatPln(balanceDue(row))}`}
                     </span>
                     <span className="mt-0.5 block text-xs text-slate-400">{formatDateTime(row.createdAt)}</span>
                   </span>
@@ -508,6 +586,9 @@ export default function AdminSubmissions() {
                         <TicketPercent className="h-3 w-3" aria-hidden />
                         {row.discountCodeSnapshot}
                       </p>
+                    )}
+                    {row.status === 'DEPOSIT_PAID' && (
+                      <p className="text-xs font-normal text-amber-700">do dopłaty {formatPln(balanceDue(row))}</p>
                     )}
                   </td>
                   <td className="px-4 py-3">
@@ -590,6 +671,8 @@ export default function AdminSubmissions() {
             onCopyEmail={copyEmail}
             onResendTicket={() => void resendTicket()}
             onReissueTicket={() => void reissueTicket()}
+            onRecordBalancePayment={() => void recordBalancePayment()}
+            onResendDepositEmail={() => void resendDepositEmail()}
             ticketBusy={ticketBusy}
             readOnly={!canEdit}
           />
@@ -608,6 +691,8 @@ interface DetailBodyProps {
   onCopyEmail: (email: string) => void;
   onResendTicket: () => void;
   onReissueTicket: () => void;
+  onRecordBalancePayment: () => void;
+  onResendDepositEmail: () => void;
   ticketBusy: boolean;
   readOnly: boolean;
 }
@@ -621,6 +706,8 @@ function SubmissionDetailBody({
   onCopyEmail,
   onResendTicket,
   onReissueTicket,
+  onRecordBalancePayment,
+  onResendDepositEmail,
   ticketBusy,
   readOnly,
 }: DetailBodyProps) {
@@ -659,6 +746,15 @@ function SubmissionDetailBody({
               <TicketPercent className="h-4 w-4" aria-hidden />
               <span className="font-mono">{detail.discountCodeSnapshot}</span>
               <span className="font-normal text-slate-500">(-{formatPln(detail.discountAmountCents)})</span>
+            </dd>
+          </div>
+        )}
+        {detail.depositCents !== null && (
+          <div>
+            <dt className="text-xs text-slate-500">Płatność</dt>
+            <dd className="mt-1 font-medium text-slate-900">
+              Zaliczka {formatPln(detail.depositCents)}
+              <span className="block text-xs font-normal text-slate-500">Wpłacono {formatPln(detail.paidCents)}</span>
             </dd>
           </div>
         )}
@@ -702,6 +798,35 @@ function SubmissionDetailBody({
         )}
       </dl>
 
+      {detail.status === 'DEPOSIT_PAID' && (
+        <div className="space-y-3 rounded-2xl border border-amber-200 bg-amber-50/60 p-4">
+          <div className="flex items-center gap-3">
+            <Coins className="h-5 w-5 text-amber-600" aria-hidden />
+            <div>
+              <p className="text-sm font-medium text-slate-900">Do dopłaty {formatPln(balanceDue(detail))}</p>
+              <p className="text-xs text-slate-500">
+                Bilet QR zostanie wysłany po dopłacie.{' '}
+                {detail.depositEmailSentAt
+                  ? `Link do dopłaty wysłany ${formatDateTime(detail.depositEmailSentAt)}.`
+                  : 'Link do dopłaty nie został wysłany.'}
+              </p>
+            </div>
+          </div>
+          {!readOnly && (
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className="btn-primary" disabled={ticketBusy} onClick={onRecordBalancePayment}>
+                <Wallet className="h-4 w-4" aria-hidden />
+                Odnotuj dopłatę
+              </button>
+              <button type="button" className="btn-secondary" disabled={ticketBusy} onClick={onResendDepositEmail}>
+                <Send className="h-4 w-4" aria-hidden />
+                Wyślij link do dopłaty
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {detail.status === 'PAID' && !readOnly && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 p-4">
           <div className="flex items-center gap-3">
@@ -738,7 +863,12 @@ function SubmissionDetailBody({
             {payments.map((payment) => (
               <li key={payment.id} className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm">
                 <StatusBadge meta={PAYMENT_STATUS[payment.status]} />
-                <span className="tabular-nums text-slate-700">{formatPln(payment.amountCents)}</span>
+                <span className="text-xs text-slate-500">
+                  {[PAYMENT_KIND_LABEL[payment.kind], payment.provider === 'manual' ? 'ręcznie' : null]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </span>
+                <span className="ml-auto tabular-nums text-slate-700">{formatPln(payment.amountCents)}</span>
                 <span className="text-xs text-slate-500">{formatDateTime(payment.createdAt)}</span>
               </li>
             ))}
@@ -878,7 +1008,7 @@ function SubmissionDetailBody({
       <p className="flex gap-2 rounded-xl bg-slate-50 px-3 py-2.5 text-xs text-slate-500">
         <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
         Tu poprawiasz tylko dane kupującego i odpowiedzi. Status, bilet i płatności zmieniają się automatycznie wraz z
-        procesem płatności.
+        procesem płatności (wyjątek: dopłatę po zaliczce możesz odnotować ręcznie).
       </p>
     </div>
   );

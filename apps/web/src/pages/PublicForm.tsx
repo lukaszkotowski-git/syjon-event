@@ -8,6 +8,7 @@ import {
   ChevronRight,
   CircleCheck,
   ClipboardCheck,
+  Coins,
   ExternalLink,
   ListChecks,
   Lock,
@@ -25,15 +26,17 @@ import {
 import {
   buildAnswersSchema,
   buyerSchema,
+  depositSplit,
   flattenSections,
   visibleFields,
   type CreateSubmissionResponse,
   type DiscountCodeCheckResponse,
   type FieldDefinition,
   type FormSection,
+  type PaymentOption,
   type PublicFormDto,
 } from '@syjonevent/shared';
-import { api, ApiError, formatPln } from '../lib/api';
+import { api, ApiError, formatDate, formatPln } from '../lib/api';
 import { PRIVACY_POLICY_URL, TERMS_URL } from '../lib/legal';
 import Stepper, { type StepConfig } from '../components/Stepper';
 import IconButton from '../components/ui/IconButton';
@@ -160,6 +163,7 @@ export default function PublicForm() {
   const [discountError, setDiscountError] = useState<string | null>(null);
   const [discountBusy, setDiscountBusy] = useState(false);
   const [appliedDiscount, setAppliedDiscount] = useState<DiscountCodeCheckResponse | null>(null);
+  const [paymentOption, setPaymentOption] = useState<PaymentOption>('FULL');
   const [legalError, setLegalError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -250,6 +254,10 @@ export default function PublicForm() {
     ? appliedDiscount.discountedPriceCents
     : (selectedTicket?.priceCents ?? 0);
   const isPaid = effectivePriceCents > 0;
+  // Ten sam podział co w API: rabat zmniejsza dopłatę, a zbyt mała dopłata oznacza płatność w całości.
+  const split = depositSplit(effectivePriceCents, selectedTicket?.depositCents);
+  const payDeposit = paymentOption === 'DEPOSIT' && split !== null;
+  const balanceDueLabel = form?.balanceDueAt ? formatDate(form.balanceDueAt) : null;
 
   // Wybrany bilet się zmienił (np. wrócono do kroku 1) — kod trzeba przeliczyć na nową cenę.
   useEffect(() => {
@@ -400,6 +408,7 @@ export default function PublicForm() {
         answers: fieldsResult.data,
         consents: consentAnswers,
         discountCode: appliedDiscount?.code,
+        paymentOption: payDeposit ? 'DEPOSIT' : 'FULL',
         acceptTerms: legal.terms,
         acceptPrivacy: legal.privacy,
       });
@@ -738,6 +747,11 @@ export default function PublicForm() {
                             />
                             <span>
                               <span className="block font-semibold text-slate-900">{ticket.name}</span>
+                              {ticket.depositCents !== null && !ticket.soldOut && (
+                                <span className="mt-0.5 block text-xs text-slate-500">
+                                  Możliwa zaliczka {formatPln(ticket.depositCents)}
+                                </span>
+                              )}
                               {ticket.soldOut && <span className="badge mt-1 bg-red-100 text-red-700">wyprzedane</span>}
                             </span>
                           </span>
@@ -828,6 +842,58 @@ export default function PublicForm() {
                         </button>
                       )}
                     </div>
+                  )}
+
+                  {split && (
+                    <fieldset className="space-y-3">
+                      <legend className="mb-3 font-semibold text-slate-900">Sposób płatności</legend>
+                      {(
+                        [
+                          ['FULL', 'Całość teraz', formatPln(effectivePriceCents), 'Bilet QR dostaniesz od razu po płatności.'],
+                          [
+                            'DEPOSIT',
+                            'Zaliczka teraz, reszta później',
+                            formatPln(split.depositCents),
+                            `Zaliczka rezerwuje miejsce. Pozostałe ${formatPln(split.balanceCents)} dopłacisz${balanceDueLabel ? ` do ${balanceDueLabel}` : ''} — bilet QR wyślemy po dopłacie.`,
+                          ],
+                        ] as const
+                      ).map(([value, title, amount, hint]) => {
+                        const active = paymentOption === value;
+                        return (
+                          <label
+                            key={value}
+                            className={`flex cursor-pointer items-start justify-between gap-4 rounded-2xl border-2 p-4 transition has-[:focus-visible]:ring-4 has-[:focus-visible]:ring-brand-200 ${
+                              active
+                                ? 'border-brand-600 bg-brand-50 shadow-soft'
+                                : 'border-slate-200 bg-white hover:border-brand-300 hover:bg-brand-50/40'
+                            }`}
+                          >
+                            <span className="flex items-start gap-3">
+                              <span
+                                className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 ${
+                                  active ? 'border-brand-600' : 'border-slate-300'
+                                }`}
+                              >
+                                {active && <span className="h-2.5 w-2.5 rounded-full bg-brand-600" />}
+                              </span>
+                              <input
+                                type="radio"
+                                name="payment-option"
+                                className="sr-only"
+                                value={value}
+                                checked={active}
+                                onChange={() => setPaymentOption(value)}
+                              />
+                              <span>
+                                <span className="block font-semibold text-slate-900">{title}</span>
+                                <span className="mt-0.5 block text-sm text-slate-500">{hint}</span>
+                              </span>
+                            </span>
+                            <span className="shrink-0 text-lg font-bold text-slate-900">{amount}</span>
+                          </label>
+                        );
+                      })}
+                    </fieldset>
                   )}
 
                   <div className="space-y-3 border-t border-slate-100 pt-5">
@@ -951,6 +1017,21 @@ export default function PublicForm() {
                         Kod <span className="font-mono font-semibold">{appliedDiscount.code}</span> — rabat{' '}
                         {formatPln(appliedDiscount.discountAmountCents)}
                       </p>
+                    )}
+                    {payDeposit && split && (
+                      <div className="mt-2 space-y-1 border-t border-brand-100 pt-2 text-sm">
+                        <p className="flex items-center justify-between gap-3">
+                          <span className="inline-flex items-center gap-1.5 text-slate-600">
+                            <Coins className="h-3.5 w-3.5 text-brand-600" aria-hidden />
+                            Zaliczka teraz
+                          </span>
+                          <span className="font-semibold text-slate-900">{formatPln(split.depositCents)}</span>
+                        </p>
+                        <p className="flex items-center justify-between gap-3 text-slate-500">
+                          <span>Do dopłaty{balanceDueLabel ? ` do ${balanceDueLabel}` : ''}</span>
+                          <span>{formatPln(split.balanceCents)}</span>
+                        </p>
+                      </div>
                     )}
                   </div>
 
@@ -1105,6 +1186,11 @@ export default function PublicForm() {
                   <button type="button" className="btn-primary" onClick={onSubmitFinal} disabled={busy}>
                     {busy ? (
                       'Przetwarzanie…'
+                    ) : payDeposit && split ? (
+                      <>
+                        <Lock className="h-4 w-4" aria-hidden />
+                        Zapłać zaliczkę {formatPln(split.depositCents)}
+                      </>
                     ) : isPaid ? (
                       <>
                         <Lock className="h-4 w-4" aria-hidden />

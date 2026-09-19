@@ -4,6 +4,7 @@ import {
   ChartColumn,
   ChartPie,
   CircleAlert,
+  Coins,
   History,
   LoaderCircle,
   Ticket,
@@ -19,6 +20,7 @@ import StatusBadge from '../components/ui/StatusBadge';
 
 const STATUS_COLORS: Record<SubmissionStatus, string> = {
   PAID: '#10b981',
+  DEPOSIT_PAID: '#eab308',
   RESERVED: '#3b82f6',
   EXPIRED: '#94a3b8',
   CANCELLED: '#f59e0b',
@@ -156,10 +158,17 @@ export default function AdminDashboard() {
         </p>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className={`grid gap-4 sm:grid-cols-2 ${totals.depositPaid > 0 ? 'lg:grid-cols-5' : 'lg:grid-cols-4'}`}>
         <KpiCard icon={Users} label="Zgłoszenia łącznie" value={String(totals.submissions)} />
-        <KpiCard icon={Wallet} label="Przychód (opłacone)" value={formatPln(totals.revenueCents)} />
+        <KpiCard icon={Wallet} label="Przychód (wpłaty)" value={formatPln(totals.revenueCents)} />
         <KpiCard icon={Ticket} label="Opłacone bilety" value={String(totals.paid)} />
+        {totals.depositPaid > 0 && (
+          <KpiCard
+            icon={Coins}
+            label={`Zaliczki (${totals.depositPaid}) — do dopłaty`}
+            value={formatPln(totals.outstandingCents)}
+          />
+        )}
         <KpiCard icon={History} label="Rezerwacje w toku" value={String(totals.reserved)} />
       </div>
 

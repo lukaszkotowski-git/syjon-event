@@ -2,13 +2,15 @@ import { Prisma } from '@prisma/client';
 import type { Tx } from '../prisma.js';
 
 /**
- * Miejsce jest zajęte przez zgłoszenie PAID albo RESERVED z aktywną rezerwacją.
+ * Miejsce jest zajęte przez zgłoszenie PAID, DEPOSIT_PAID albo RESERVED z aktywną rezerwacją.
+ * Zaliczka trzyma miejsce na stałe — także po terminie dopłaty (decyzja należy do organizatora).
  * Wygasła rezerwacja nie blokuje miejsca — nie potrzebujemy do tego crona.
  */
 export function occupiedWhere(now: Date) {
   return {
     OR: [
       { status: 'PAID' as const },
+      { status: 'DEPOSIT_PAID' as const },
       { status: 'RESERVED' as const, reservationExpiresAt: { gt: now } },
     ],
   };

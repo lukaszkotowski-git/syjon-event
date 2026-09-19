@@ -8,6 +8,7 @@ import {
   CircleCheck,
   CircleX,
   Code,
+  Coins,
   Copy,
   CopyPlus,
   CreditCard,
@@ -33,6 +34,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import {
+  DEPOSIT_EMAIL_VARIABLES,
   EMAIL_BUILTIN_VARIABLES,
   flattenSections,
   knownVariableNames,
@@ -48,7 +50,7 @@ import BackgroundUploader from '../components/editor/BackgroundUploader';
 import ConsentsEditor, { consentsErrors } from '../components/editor/ConsentsEditor';
 import DiscountCodesEditor, { discountCodeError, type DiscountCodeDraft } from '../components/editor/DiscountCodesEditor';
 import EditorNav, { type NavSection } from '../components/editor/EditorNav';
-import TicketsEditor, { ticketError, type TicketDraft } from '../components/editor/TicketsEditor';
+import TicketsEditor, { parseDepositInput, ticketError, type TicketDraft } from '../components/editor/TicketsEditor';
 import { useConfirm } from '../components/ui/ConfirmDialog';
 import IconButton from '../components/ui/IconButton';
 import Menu, { type MenuItem } from '../components/ui/Menu';
@@ -63,6 +65,7 @@ interface TicketDto {
   id: string;
   name: string;
   priceCents: number;
+  depositCents: number | null;
   capacity: number | null;
   sortOrder: number;
   isActive: boolean;
@@ -86,6 +89,9 @@ interface FormDetails {
   paymentErrorBody: string | null;
   confirmationEmailTitle: string | null;
   confirmationEmailBody: string | null;
+  balanceDueAt: string | null;
+  depositEmailTitle: string | null;
+  depositEmailBody: string | null;
   backgroundImageDesktopUrl: string | null;
   backgroundImageMobileUrl: string | null;
   schemaJson: { sections: FormSection[]; consents?: ConsentDefinition[]; customScript?: string };
@@ -114,7 +120,13 @@ interface Draft {
   paymentErrorBody: string;
   confirmationEmailTitle: string;
   confirmationEmailBody: string;
+  /** "RRRR-MM-DD" albo pusty. */
+  balanceDueAt: string;
+  depositEmailTitle: string;
+  depositEmailBody: string;
 }
+
+type EmailTemplateKey = 'confirmationEmailTitle' | 'confirmationEmailBody' | 'depositEmailTitle' | 'depositEmailBody';
 
 interface EditorState {
   draft: Draft;
@@ -133,6 +145,7 @@ const NAV_SECTIONS: NavSection[] = [
   { id: 'zgody', label: 'Zgody', icon: ShieldCheck },
   { id: 'wyglad', label: 'Wygląd', icon: Image },
   { id: 'email', label: 'E-mail', icon: Mail },
+  { id: 'email-zaliczka', label: 'E-mail po zaliczce', icon: Coins },
   { id: 'zaawansowane', label: 'Zaawansowane', icon: Code },
 ];
 
@@ -151,6 +164,8 @@ const toLocalDateInput = (iso: string) => {
 // Wybieramy same daty: wydarzenie zaczyna się o północy, a zapisy trwają do końca wybranego dnia.
 const eventDateToIso = (day: string) => new Date(`${day}T00:00:00`).toISOString();
 const closesAtToIso = (day: string) => new Date(`${day}T23:59:59`).toISOString();
+
+const DEPOSIT_VARIABLE_NAMES = new Set<string>(DEPOSIT_EMAIL_VARIABLES.map((variable) => variable.name));
 
 function defaultSections(): FormSection[] {
   return [
@@ -186,6 +201,9 @@ function emptyState(): EditorState {
       paymentErrorBody: '',
       confirmationEmailTitle: '',
       confirmationEmailBody: '',
+      balanceDueAt: '',
+      depositEmailTitle: '',
+      depositEmailBody: '',
     },
     sections: defaultSections(),
     consents: [],
@@ -213,6 +231,9 @@ function stateFromForm(form: FormDetails): EditorState {
       paymentErrorBody: form.paymentErrorBody ?? '',
       confirmationEmailTitle: form.confirmationEmailTitle ?? '',
       confirmationEmailBody: form.confirmationEmailBody ?? '',
+      balanceDueAt: form.balanceDueAt ? toLocalDateInput(form.balanceDueAt) : '',
+      depositEmailTitle: form.depositEmailTitle ?? '',
+      depositEmailBody: form.depositEmailBody ?? '',
     },
     sections: form.schemaJson.sections ?? [],
     consents: form.schemaJson.consents ?? [],
@@ -224,6 +245,7 @@ function stateFromForm(form: FormDetails): EditorState {
         id: t.id,
         name: t.name,
         priceInput: centsToPlnInput(t.priceCents),
+        depositInput: t.depositCents ? centsToPlnInput(t.depositCents) : '',
         capacityInput: t.capacity?.toString() ?? '',
         isActive: t.isActive,
       })),
@@ -247,9 +269,10 @@ function snapshot(state: EditorState): string {
     sections: state.sections,
     consents: state.consents,
     customScript: state.customScript,
-    tickets: state.tickets.map(({ key: _key, priceInput, ...rest }) => ({
+    tickets: state.tickets.map(({ key: _key, priceInput, depositInput, ...rest }) => ({
       ...rest,
       price: parsePlnInput(priceInput) ?? priceInput,
+      deposit: parseDepositInput(depositInput) ?? depositInput,
     })),
     discountCodes: state.discountCodes.map(({ key: _key, usageCount: _usageCount, valueInput, type, ...rest }) => ({
       ...rest,
@@ -272,6 +295,75 @@ function VariableChip({ name, label, onInsert }: { name: string; label: string; 
       {label}
       <code className="font-mono text-[11px] text-slate-400">{`{{${name}}}`}</code>
     </button>
+  );
+}
+
+/** Przyciski wstawiania znaczników do tytułu/treści e-maila + ostrzeżenie o nieznanych znacznikach. */
+function EmailVariablesPanel({
+  extraVariables = [],
+  fieldVariables,
+  unknownVariables,
+  onInsert,
+}: {
+  extraVariables?: readonly { name: string; label: string }[];
+  fieldVariables: { name: string; label: string }[];
+  unknownVariables: string[];
+  onInsert: (name: string) => void;
+}) {
+  return (
+    <div className="space-y-3 rounded-xl bg-slate-50 p-4">
+      <p className="flex flex-wrap items-center gap-x-2 text-sm font-medium text-slate-700">
+        <Braces className="h-4 w-4 text-brand-600" aria-hidden />
+        Pola dynamiczne
+        <span className="font-normal text-slate-500">— kliknij, aby wstawić w miejscu kursora</span>
+      </p>
+      {extraVariables.length > 0 && (
+        <div>
+          <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-slate-400">Dopłata</p>
+          <div className="flex flex-wrap gap-1.5">
+            {extraVariables.map((variable) => (
+              <VariableChip key={variable.name} name={variable.name} label={variable.label} onInsert={onInsert} />
+            ))}
+          </div>
+        </div>
+      )}
+      <div>
+        <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-slate-400">Dane zgłoszenia</p>
+        <div className="flex flex-wrap gap-1.5">
+          {EMAIL_BUILTIN_VARIABLES.filter((variable) => !HIDDEN_BUILTIN_VARIABLES.has(variable.name)).map(
+            (variable) => (
+              <VariableChip key={variable.name} name={variable.name} label={variable.label} onInsert={onInsert} />
+            ),
+          )}
+        </div>
+      </div>
+      {fieldVariables.length > 0 && (
+        <div>
+          <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-slate-400">Pola formularza</p>
+          <div className="flex flex-wrap gap-1.5">
+            {fieldVariables.map((variable) => (
+              <VariableChip key={variable.name} name={variable.name} label={variable.label} onInsert={onInsert} />
+            ))}
+          </div>
+        </div>
+      )}
+      <p className="text-xs text-slate-500">
+        Wielkość liter i polskie znaki nie mają znaczenia — <code className="font-mono">{'{{imię}}'}</code> działa tak
+        samo jak <code className="font-mono">{'{{imie}}'}</code>. Pole bez odpowiedzi zostaje puste.
+      </p>
+      {unknownVariables.length > 0 && (
+        <p className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+          <span>
+            Nieznane pola:{' '}
+            {unknownVariables.map((name) => (
+              <code key={name} className="mr-1 font-mono">{`{{${name}}}`}</code>
+            ))}
+            — w wysłanym e-mailu będą puste. Sprawdź pisownię lub wybierz pole z listy.
+          </span>
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -343,6 +435,9 @@ export default function AdminFormEditor() {
   const emailTitleRef = useRef<HTMLInputElement>(null);
   const emailBodyRef = useRef<HTMLTextAreaElement>(null);
   const emailTargetRef = useRef<'confirmationEmailTitle' | 'confirmationEmailBody'>('confirmationEmailBody');
+  const depositEmailTitleRef = useRef<HTMLInputElement>(null);
+  const depositEmailBodyRef = useRef<HTMLTextAreaElement>(null);
+  const depositEmailTargetRef = useRef<'depositEmailTitle' | 'depositEmailBody'>('depositEmailBody');
 
   const [initial] = useState(emptyState);
   const [form, setForm] = useState<FormDetails | null>(null);
@@ -407,6 +502,8 @@ export default function AdminFormEditor() {
   const current: EditorState = { draft, sections, consents, customScript, tickets, discountCodes };
   const currentSnapshot = snapshot(current);
   const dirty = currentSnapshot !== savedSnapshot;
+  const hasDeposits = tickets.some((ticket) => (parseDepositInput(ticket.depositInput) ?? 0) > 0);
+  const showDepositEmail = hasDeposits || Boolean(draft.depositEmailTitle || draft.depositEmailBody);
 
   const blocker = useBlocker(
     ({ currentLocation, nextLocation }) =>
@@ -470,6 +567,12 @@ export default function AdminFormEditor() {
       scrollToSection('pola');
       return false;
     }
+    if (hasDeposits && !draft.balanceDueAt) {
+      setShowTicketErrors(true);
+      toast.error('Bilety z zaliczką wymagają terminu dopłaty');
+      scrollToSection('bilety');
+      return false;
+    }
     const consentProblems = consentsErrors(consents);
     if (consentProblems.length > 0) {
       toast.error(consentProblems[0] as string);
@@ -506,6 +609,10 @@ export default function AdminFormEditor() {
       paymentErrorBody: draft.paymentErrorBody || null,
       confirmationEmailTitle: draft.confirmationEmailTitle || null,
       confirmationEmailBody: draft.confirmationEmailBody || null,
+      // Dopłata przyjmowana do końca wybranego dnia — jak zamknięcie zapisów.
+      balanceDueAt: draft.balanceDueAt ? closesAtToIso(draft.balanceDueAt) : null,
+      depositEmailTitle: draft.depositEmailTitle || null,
+      depositEmailBody: draft.depositEmailBody || null,
       schemaJson: {
         sections: cleanedSections,
         consents: consents.map((consent) => ({ ...consent, label: consent.label.trim(), url: consent.url?.trim() || undefined })),
@@ -531,6 +638,7 @@ export default function AdminFormEditor() {
         const body = {
           name: ticket.name.trim(),
           priceCents: parsePlnInput(ticket.priceInput) ?? 0,
+          depositCents: parseDepositInput(ticket.depositInput) || null,
           capacity: ticket.capacityInput === '' ? null : Number(ticket.capacityInput),
           sortOrder: index + 1,
           isActive: ticket.isActive,
@@ -545,6 +653,7 @@ export default function AdminFormEditor() {
               !prev ||
               prev.name !== body.name ||
               prev.priceCents !== body.priceCents ||
+              prev.depositCents !== body.depositCents ||
               prev.capacity !== body.capacity ||
               prev.sortOrder !== body.sortOrder ||
               prev.isActive !== body.isActive;
@@ -755,9 +864,7 @@ export default function AdminFormEditor() {
   const setField = <K extends keyof Draft>(key: K, value: Draft[K]) => setDraft((d) => ({ ...d, [key]: value }));
 
   /** Wstawia znacznik w miejscu kursora w ostatnio edytowanym polu (tytuł albo treść). */
-  function insertEmailVariable(name: string) {
-    const key = emailTargetRef.current;
-    const element = key === 'confirmationEmailTitle' ? emailTitleRef.current : emailBodyRef.current;
+  function insertVariableInto(key: EmailTemplateKey, element: HTMLInputElement | HTMLTextAreaElement | null, name: string) {
     const current = draft[key];
     const token = `{{${name}}}`;
     const start = element?.selectionStart ?? current.length;
@@ -767,6 +874,16 @@ export default function AdminFormEditor() {
       element?.focus();
       element?.setSelectionRange(start + token.length, start + token.length);
     });
+  }
+
+  function insertEmailVariable(name: string) {
+    const key = emailTargetRef.current;
+    insertVariableInto(key, key === 'confirmationEmailTitle' ? emailTitleRef.current : emailBodyRef.current, name);
+  }
+
+  function insertDepositEmailVariable(name: string) {
+    const key = depositEmailTargetRef.current;
+    insertVariableInto(key, key === 'depositEmailTitle' ? depositEmailTitleRef.current : depositEmailBodyRef.current, name);
   }
 
   const moreActions: MenuItem[] = form
@@ -822,9 +939,17 @@ export default function AdminFormEditor() {
     return { name: unique ? slug : field.key, label: field.label };
   });
   const knownNames = knownVariableNames(sections);
+  // Znaczniki dopłaty mają wartość tylko w e-mailu po zaliczce — w potwierdzeniu byłyby puste.
   const unknownEmailVariables = [
     ...new Set(
       templateVariableNames(`${draft.confirmationEmailTitle}\n${draft.confirmationEmailBody}`).filter(
+        (name) => !knownNames.has(name) || DEPOSIT_VARIABLE_NAMES.has(name),
+      ),
+    ),
+  ];
+  const unknownDepositEmailVariables = [
+    ...new Set(
+      templateVariableNames(`${draft.depositEmailTitle}\n${draft.depositEmailBody}`).filter(
         (name) => !knownNames.has(name),
       ),
     ),
@@ -896,7 +1021,7 @@ export default function AdminFormEditor() {
       )}
 
       <div className="grid gap-6 lg:grid-cols-[12.5rem_minmax(0,1fr)] lg:gap-8">
-        <EditorNav sections={NAV_SECTIONS} />
+        <EditorNav sections={NAV_SECTIONS.filter((section) => section.id !== 'email-zaliczka' || showDepositEmail)} />
 
         <form ref={formRef} onSubmit={onSubmit} className="min-w-0">
           {/* Konto "tylko podgląd" widzi wszystkie ustawienia, ale pola są zablokowane. */}
@@ -1057,7 +1182,7 @@ export default function AdminFormEditor() {
               id="bilety"
               icon={Ticket}
               title="Bilety"
-              description="Bilet płatny kosztuje minimum 1,00 zł (limit Paynow) albo jest bezpłatny."
+              description="Bilet płatny kosztuje minimum 1,00 zł (limit Paynow) albo jest bezpłatny. Z zaliczką uczestnik może najpierw wpłacić jej kwotę, a resztę dopłacić później."
             >
               <TicketsEditor
                 tickets={tickets}
@@ -1066,6 +1191,27 @@ export default function AdminFormEditor() {
                 capacityTotal={form?.capacityTotal ?? null}
                 showErrors={showTicketErrors}
               />
+              {(hasDeposits || draft.balanceDueAt) && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4">
+                  <label className="label" htmlFor="form-balance-due">
+                    Termin dopłaty
+                  </label>
+                  <input
+                    id="form-balance-due"
+                    type="date"
+                    className={`input max-w-xs ${showTicketErrors && hasDeposits && !draft.balanceDueAt ? 'input-error' : ''}`}
+                    value={draft.balanceDueAt}
+                    max={draft.eventDate || undefined}
+                    aria-describedby="form-balance-due-hint"
+                    onChange={(e) => setField('balanceDueAt', e.target.value)}
+                  />
+                  <p id="form-balance-due-hint" className="mt-1.5 text-xs text-slate-600">
+                    Do końca tego dnia uczestnik dopłaci resztę online. Później przycisk dopłaty znika — dopłatę możesz
+                    wtedy odnotować ręcznie w zgłoszeniu. Bez dopłaty bilet nie jest ważny na wejściu, ale miejsce zostaje
+                    zajęte. Po tym dniu nowi uczestnicy nie mogą już wybrać zaliczki.
+                  </p>
+                </div>
+              )}
             </EditorCard>
 
             <EditorCard
@@ -1139,50 +1285,59 @@ export default function AdminFormEditor() {
                 </div>
               </div>
 
-              <div className="space-y-3 rounded-xl bg-slate-50 p-4">
-                <p className="flex flex-wrap items-center gap-x-2 text-sm font-medium text-slate-700">
-                  <Braces className="h-4 w-4 text-brand-600" aria-hidden />
-                  Pola dynamiczne
-                  <span className="font-normal text-slate-500">— kliknij, aby wstawić w miejscu kursora</span>
-                </p>
-                <div>
-                  <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-slate-400">Dane zgłoszenia</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {EMAIL_BUILTIN_VARIABLES.filter((variable) => !HIDDEN_BUILTIN_VARIABLES.has(variable.name)).map(
-                      (variable) => (
-                        <VariableChip key={variable.name} name={variable.name} label={variable.label} onInsert={insertEmailVariable} />
-                      ),
-                    )}
+              <EmailVariablesPanel
+                fieldVariables={fieldVariables}
+                unknownVariables={unknownEmailVariables}
+                onInsert={insertEmailVariable}
+              />
+            </EditorCard>
+
+            {showDepositEmail && (
+              <EditorCard
+                id="email-zaliczka"
+                icon={Coins}
+                title="E-mail po zaliczce"
+                description="Wysyłany po wpłacie zaliczki. Kwota i termin dopłaty oraz przycisk „Dopłać” dodają się automatycznie. Puste pole = tekst domyślny."
+              >
+                <div className="space-y-4">
+                  <div>
+                    <label className="label" htmlFor="deposit-email-title">
+                      Tytuł
+                    </label>
+                    <input
+                      ref={depositEmailTitleRef}
+                      id="deposit-email-title"
+                      className="input"
+                      placeholder="Np. {{imie}}, Twoje miejsce jest zarezerwowane"
+                      value={draft.depositEmailTitle}
+                      onFocus={() => (depositEmailTargetRef.current = 'depositEmailTitle')}
+                      onChange={(e) => setField('depositEmailTitle', e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="label" htmlFor="deposit-email-body">
+                      Treść
+                    </label>
+                    <textarea
+                      ref={depositEmailBodyRef}
+                      id="deposit-email-body"
+                      className="input h-32"
+                      placeholder="Np. Cześć {{imie}}! Dziękujemy za zaliczkę. Pozostałe {{kwota_doplaty}} dopłać do {{termin_doplaty}}."
+                      value={draft.depositEmailBody}
+                      onFocus={() => (depositEmailTargetRef.current = 'depositEmailBody')}
+                      onChange={(e) => setField('depositEmailBody', e.target.value)}
+                    />
                   </div>
                 </div>
-                {fieldVariables.length > 0 && (
-                  <div>
-                    <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-slate-400">Pola formularza</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {fieldVariables.map((variable) => (
-                        <VariableChip key={variable.name} name={variable.name} label={variable.label} onInsert={insertEmailVariable} />
-                      ))}
-                    </div>
-                  </div>
-                )}
-                <p className="text-xs text-slate-500">
-                  Wielkość liter i polskie znaki nie mają znaczenia — <code className="font-mono">{'{{imię}}'}</code> działa tak
-                  samo jak <code className="font-mono">{'{{imie}}'}</code>. Pole bez odpowiedzi zostaje puste.
-                </p>
-                {unknownEmailVariables.length > 0 && (
-                  <p className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                    <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
-                    <span>
-                      Nieznane pola:{' '}
-                      {unknownEmailVariables.map((name) => (
-                        <code key={name} className="mr-1 font-mono">{`{{${name}}}`}</code>
-                      ))}
-                      — w wysłanym e-mailu będą puste. Sprawdź pisownię lub wybierz pole z listy.
-                    </span>
-                  </p>
-                )}
-              </div>
-            </EditorCard>
+
+                <EmailVariablesPanel
+                  extraVariables={DEPOSIT_EMAIL_VARIABLES}
+                  fieldVariables={fieldVariables}
+                  unknownVariables={unknownDepositEmailVariables}
+                  onInsert={insertDepositEmailVariable}
+                />
+              </EditorCard>
+            )}
 
             <EditorCard
               id="zaawansowane"

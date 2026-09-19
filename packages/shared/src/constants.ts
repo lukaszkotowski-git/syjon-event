@@ -21,7 +21,7 @@ export const MAX_LOCATION_LENGTH = 300;
 export const CURRENCY = 'PLN' as const;
 
 export const FORM_STATUS = ['DRAFT', 'PUBLISHED', 'ARCHIVED'] as const;
-export const SUBMISSION_STATUS = ['RESERVED', 'PAID', 'EXPIRED', 'CANCELLED'] as const;
+export const SUBMISSION_STATUS = ['RESERVED', 'DEPOSIT_PAID', 'PAID', 'EXPIRED', 'CANCELLED'] as const;
 export const PAYMENT_STATUS = [
   'NEW',
   'PENDING',

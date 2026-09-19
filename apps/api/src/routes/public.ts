@@ -4,6 +4,7 @@ import {
   applyDiscount,
   checkDiscountCodeRequest,
   createSubmissionRequest,
+  depositSplit,
   normalizeDiscountCode,
   type CreateSubmissionResponse,
   type DiscountCodeCheckResponse,
@@ -23,8 +24,10 @@ import { prisma } from '../prisma.js';
 import { countOccupancy } from '../services/capacity.js';
 import { confirmationUrl, startPaymentAttempt, syncOpenPayments } from '../services/payments.js';
 import {
+  amountDueCents,
   assertFormOpen,
   assertPublicToken,
+  canPayBalanceOnline,
   createRegistration,
   materializeExpiry,
   parseFormSchema,
@@ -86,6 +89,7 @@ publicRouter.get(
       prisma.discountCode.count({ where: { formId: form.id, isActive: true } }),
     ]);
     const formSoldOut = form.capacityTotal !== null && occupancy.total >= form.capacityTotal;
+    const depositsOpen = canPayBalanceOnline(form, now);
 
     const dto: PublicFormDto = {
       slug: form.slug,
@@ -98,6 +102,7 @@ publicRouter.get(
       privacyPolicyVersion: form.privacyPolicyVersion,
       schemaJson: parseFormSchema(form.schemaJson),
       hasDiscountCodes: activeDiscountCodes > 0,
+      balanceDueAt: depositsOpen ? form.balanceDueAt!.toISOString() : null,
       soldOut: formSoldOut,
       backgroundImageDesktopUrl: form.backgroundImageDesktopUrl,
       backgroundImageMobileUrl: form.backgroundImageMobileUrl,
@@ -107,6 +112,7 @@ publicRouter.get(
           id: ticket.id,
           name: ticket.name,
           priceCents: ticket.priceCents,
+          depositCents: depositsOpen && depositSplit(ticket.priceCents, ticket.depositCents) ? ticket.depositCents : null,
           currency: ticket.currency as 'PLN',
           soldOut: formSoldOut || (ticket.capacity !== null && taken >= ticket.capacity),
         };
@@ -197,7 +203,7 @@ publicRouter.post(
 
     let redirectUrl: string | null = null;
     try {
-      redirectUrl = (await startPaymentAttempt(submission, publicToken, form.title)).redirectUrl;
+      redirectUrl = (await startPaymentAttempt(submission, publicToken, form)).redirectUrl;
     } catch (error) {
       // Zgłoszenie już istnieje i trzyma miejsce — bez tokenu klient nie mógłby do niego
       // wrócić. Kierujemy go na stronę potwierdzenia, skąd ponowi płatność.
@@ -233,7 +239,9 @@ publicRouter.get(
     assertPublicToken(submissionRecord, extractToken(req as never));
 
     // Fallback: webhook mógł jeszcze nie dotrzeć — pytamy Paynow o status serwerowo.
-    if (submissionRecord.status === 'RESERVED') await syncOpenPayments(submissionRecord.id);
+    if (submissionRecord.status === 'RESERVED' || submissionRecord.status === 'DEPOSIT_PAID') {
+      await syncOpenPayments(submissionRecord.id);
+    }
 
     const fresh = await materializeExpiry(
       (await prisma.submission.findUniqueOrThrow({ where: { id: submissionRecord.id } })),
@@ -243,11 +251,15 @@ publicRouter.get(
       orderBy: { createdAt: 'desc' },
     });
 
+    const lastAttemptOpenable =
+      payment === null || ['REJECTED', 'ERROR', 'ABANDONED', 'EXPIRED', 'NEW'].includes(payment.status);
     const canRetry =
       fresh.status === 'RESERVED' &&
       fresh.reservationExpiresAt !== null &&
       fresh.reservationExpiresAt > new Date() &&
-      (payment === null || ['REJECTED', 'ERROR', 'ABANDONED', 'EXPIRED', 'NEW'].includes(payment.status));
+      lastAttemptOpenable;
+    const canPayOnline = canPayBalanceOnline(submissionRecord.form);
+    const hasDeposit = fresh.depositCents !== null;
 
     const dto: SubmissionStatusDto = {
       submissionId: fresh.id,
@@ -258,6 +270,16 @@ publicRouter.get(
       discountCodeSnapshot: fresh.discountCodeSnapshot,
       discountAmountCents: fresh.discountAmountCents,
       reservationExpiresAt: fresh.reservationExpiresAt?.toISOString() ?? null,
+      amountDueCents: amountDueCents(fresh),
+      balance: hasDeposit
+        ? {
+            depositCents: fresh.depositCents as number,
+            paidCents: fresh.paidCents,
+            balanceCents: Math.max(0, fresh.ticketPriceCents - fresh.paidCents),
+            dueAt: submissionRecord.form.balanceDueAt?.toISOString() ?? null,
+            canPayOnline,
+          }
+        : null,
       lastPayment: payment
         ? {
             status: payment.status,
@@ -320,6 +342,14 @@ publicRouter.post(
       await prisma.submission.findUniqueOrThrow({ where: { id: submission.id } }),
     );
     if (fresh.status === 'PAID') throw conflict('Zgłoszenie jest już opłacone', 'ALREADY_PAID');
+    if (fresh.status === 'DEPOSIT_PAID') {
+      if (!canPayBalanceOnline(submission.form)) {
+        throw gone('Termin dopłaty minął. Skontaktuj się z organizatorem wydarzenia.', 'BALANCE_OVERDUE');
+      }
+      const payment = await startPaymentAttempt(fresh, token as string, submission.form);
+      res.json({ redirectUrl: payment.redirectUrl });
+      return;
+    }
     if (fresh.status !== 'RESERVED' || !fresh.reservationExpiresAt || fresh.reservationExpiresAt <= new Date()) {
       throw gone(
         'Rezerwacja wygasła. Wypełnij formularz ponownie, jeśli miejsca są nadal dostępne.',
@@ -329,7 +359,7 @@ publicRouter.post(
 
     // Ponowna próba nie może "wskrzesić" miejsca — rezerwacja wciąż musi być ważna,
     // a jej TTL nie jest przedłużany. Niezakończona płatność w Paynow jest wznawiana, a nie dublowana.
-    const payment = await startPaymentAttempt(fresh, token as string, submission.form.title);
+    const payment = await startPaymentAttempt(fresh, token as string, submission.form);
     res.json({ redirectUrl: payment.redirectUrl });
   }),
 );

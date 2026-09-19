@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronUp, Plus, Trash2 } from 'lucide-react';
-import { MAX_TICKET_TYPES_PER_FORM, MIN_PAID_AMOUNT_CENTS } from '@syjonevent/shared';
+import { depositError, MAX_TICKET_TYPES_PER_FORM, MIN_PAID_AMOUNT_CENTS } from '@syjonevent/shared';
 import { formatPln } from '../../lib/api';
 import { centsToPlnInput, parsePlnInput } from '../../lib/format';
 import IconButton from '../ui/IconButton';
@@ -11,16 +11,30 @@ export interface TicketDraft {
   id: string | null;
   name: string;
   priceInput: string;
+  /** Pusty = bilet płatny tylko w całości. */
+  depositInput: string;
   capacityInput: string;
   isActive: boolean;
 }
 
-export function ticketError(ticket: TicketDraft): { name?: string; price?: string; capacity?: string } {
-  const errors: { name?: string; price?: string; capacity?: string } = {};
+/** Zaliczka w groszach; null = brak zaliczki, NaN = niepoprawna kwota. */
+export function parseDepositInput(input: string): number | null {
+  if (input.trim() === '') return null;
+  return parsePlnInput(input) ?? Number.NaN;
+}
+
+export function ticketError(ticket: TicketDraft): { name?: string; price?: string; deposit?: string; capacity?: string } {
+  const errors: { name?: string; price?: string; deposit?: string; capacity?: string } = {};
   if (!ticket.name.trim()) errors.name = 'Podaj nazwę biletu';
   const cents = parsePlnInput(ticket.priceInput);
   if (cents === null) errors.price = 'Niepoprawna kwota';
   else if (cents > 0 && cents < MIN_PAID_AMOUNT_CENTS) errors.price = 'Min. 1,00 zł lub 0';
+  const deposit = parseDepositInput(ticket.depositInput);
+  if (Number.isNaN(deposit)) errors.deposit = 'Niepoprawna kwota';
+  else if (cents !== null) {
+    const message = depositError(cents, deposit);
+    if (message) errors.deposit = message;
+  }
   if (ticket.capacityInput !== '' && !(Number.isInteger(Number(ticket.capacityInput)) && Number(ticket.capacityInput) > 0)) {
     errors.capacity = 'Liczba większa od 0';
   }
@@ -55,6 +69,7 @@ export default function TicketsEditor({ tickets, onChange, occupancy, capacityTo
         id: null,
         name: '',
         priceInput: '0',
+        depositInput: '',
         capacityInput: '',
         isActive: true,
       },
@@ -98,7 +113,7 @@ export default function TicketsEditor({ tickets, onChange, occupancy, capacityTo
                 ticket.isActive ? 'border-slate-200 bg-white' : 'border-dashed border-slate-300 bg-slate-50/70'
               }`}
             >
-              <div className="grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)]">
                 <div>
                   <label className="label" htmlFor={`ticket-name-${ticket.key}`}>
                     Nazwa biletu
@@ -138,6 +153,40 @@ export default function TicketsEditor({ tickets, onChange, occupancy, capacityTo
                   ) : (
                     <p className="mt-1 text-xs text-slate-500">
                       {cents === 0 ? 'Bezpłatny' : cents !== null ? formatPln(cents) : ''}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <label className="label" htmlFor={`ticket-deposit-${ticket.key}`}>
+                    Zaliczka
+                  </label>
+                  <div className="relative">
+                    <input
+                      id={`ticket-deposit-${ticket.key}`}
+                      className={`input pr-10 text-right tabular-nums ${errors.deposit ? 'input-error' : ''}`}
+                      inputMode="decimal"
+                      placeholder="Brak"
+                      value={ticket.depositInput}
+                      onChange={(e) => update(index, { depositInput: e.target.value })}
+                      onBlur={() => {
+                        const parsed = parseDepositInput(ticket.depositInput);
+                        if (parsed !== null && !Number.isNaN(parsed)) {
+                          update(index, { depositInput: parsed === 0 ? '' : centsToPlnInput(parsed) });
+                        }
+                      }}
+                    />
+                    <span className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-sm text-slate-400">
+                      zł
+                    </span>
+                  </div>
+                  {errors.deposit ? (
+                    <p className="mt-1 text-xs text-red-600">{errors.deposit}</p>
+                  ) : (
+                    <p className="mt-1 text-xs text-slate-500">
+                      {(() => {
+                        const deposit = parseDepositInput(ticket.depositInput);
+                        return deposit && cents ? `Dopłata ${formatPln(cents - deposit)}` : 'Tylko całość';
+                      })()}
                     </p>
                   )}
                 </div>

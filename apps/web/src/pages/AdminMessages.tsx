@@ -15,7 +15,7 @@ interface FormInfo {
   ticketTypes: { id: string; name: string; isActive: boolean }[];
 }
 
-type AudienceStatus = 'PAID' | 'RESERVED';
+type AudienceStatus = 'PAID' | 'DEPOSIT_PAID' | 'RESERVED';
 
 const VARIABLES = [
   { name: 'imie', label: 'Imię' },
@@ -151,6 +151,7 @@ export default function AdminMessages() {
               {(
                 [
                   ['PAID', 'Opłacone zgłoszenia'],
+                  ['DEPOSIT_PAID', 'Wpłacona zaliczka — nie dopłacili'],
                   ['RESERVED', 'Rezerwacje czekające na płatność'],
                 ] as const
               ).map(([value, label]) => (

@@ -6,6 +6,7 @@ import { z } from 'zod';
 import {
   buildAnswersSchema,
   createFormRequest,
+  depositError,
   discountCodeInput,
   EMPTY_FORM_SCHEMA,
   flattenSections,
@@ -26,6 +27,7 @@ import { badRequest, conflict, notFound } from '../http/errors.js';
 import { prisma } from '../prisma.js';
 import { audit, changedKeys } from '../services/audit.js';
 import { countOccupancy, isUniqueViolation } from '../services/capacity.js';
+import { recordManualBalancePayment, sendDepositEmail } from '../services/payments.js';
 import { guessDisplayName, normalizeSearchText } from '../services/participants.js';
 import { parseFormSchema } from '../services/registration.js';
 import { imageUpload, UPLOAD_DIR, uploadPublicUrl } from '../uploads.js';
@@ -70,6 +72,9 @@ const FORM_FIELD_LABELS: Record<string, string> = {
   paymentErrorBody: 'strona po płatności',
   confirmationEmailTitle: 'e-mail',
   confirmationEmailBody: 'e-mail',
+  balanceDueAt: 'termin dopłaty',
+  depositEmailTitle: 'e-mail po zaliczce',
+  depositEmailBody: 'e-mail po zaliczce',
   schemaJson: 'pola formularza',
 };
 
@@ -101,6 +106,7 @@ adminFormsRouter.get(
           capacityTotal: form.capacityTotal,
           paidCount: byStatus.PAID ?? 0,
           reservedCount: byStatus.RESERVED ?? 0,
+          depositPaidCount: byStatus.DEPOSIT_PAID ?? 0,
           // Wszystkie zgłoszenia (także wygasłe/anulowane) — decyduje, czy wydarzenie można usunąć.
           submissionCount: rows.reduce((sum, r) => sum + r._count._all, 0),
           thumbnailUrl: form.backgroundImageDesktopUrl ?? form.backgroundImageMobileUrl,
@@ -133,6 +139,9 @@ adminFormsRouter.post(
           paymentErrorBody: body.paymentErrorBody ?? null,
           confirmationEmailTitle: body.confirmationEmailTitle ?? null,
           confirmationEmailBody: body.confirmationEmailBody ?? null,
+          balanceDueAt: body.balanceDueAt ? new Date(body.balanceDueAt) : null,
+          depositEmailTitle: body.depositEmailTitle ?? null,
+          depositEmailBody: body.depositEmailBody ?? null,
           schemaJson: (body.schemaJson ?? EMPTY_FORM_SCHEMA) as object,
           createdByAdminId: req.admin!.id,
         },
@@ -217,6 +226,11 @@ adminFormsRouter.patch(
           ...(body.confirmationEmailBody !== undefined
             ? { confirmationEmailBody: body.confirmationEmailBody ?? null }
             : {}),
+          ...(body.balanceDueAt !== undefined
+            ? { balanceDueAt: body.balanceDueAt ? new Date(body.balanceDueAt) : null }
+            : {}),
+          ...(body.depositEmailTitle !== undefined ? { depositEmailTitle: body.depositEmailTitle ?? null } : {}),
+          ...(body.depositEmailBody !== undefined ? { depositEmailBody: body.depositEmailBody ?? null } : {}),
           ...(body.schemaJson !== undefined ? { schemaJson: body.schemaJson as object } : {}),
         },
       });
@@ -225,6 +239,7 @@ adminFormsRouter.patch(
           ...form,
           eventDate: form.eventDate.toISOString(),
           closesAt: form.closesAt.toISOString(),
+          balanceDueAt: form.balanceDueAt?.toISOString() ?? null,
           schemaJson: parseFormSchema(form.schemaJson),
         },
         { ...body, ...(body.schemaJson ? { schemaJson: parseFormSchema(body.schemaJson) } : {}) },
@@ -256,6 +271,9 @@ adminFormsRouter.post(
     }
     if (form.closesAt <= new Date()) {
       throw badRequest('Data zamknięcia rejestracji musi być w przyszłości');
+    }
+    if (form.ticketTypes.some((t) => t.isActive && t.depositCents !== null) && !form.balanceDueAt) {
+      throw badRequest('Bilety z zaliczką wymagają terminu dopłaty — ustaw go w sekcji „Bilety”');
     }
     const updated = await prisma.form.update({ where: { id: form.id }, data: { status: 'PUBLISHED' } });
     await audit(req, { action: 'form.publish', formId: form.id, entityId: form.id, summary: `Opublikowano „${form.title}”` });
@@ -331,6 +349,9 @@ adminFormsRouter.post(
         paymentErrorBody: source.paymentErrorBody,
         confirmationEmailTitle: source.confirmationEmailTitle,
         confirmationEmailBody: source.confirmationEmailBody,
+        balanceDueAt: source.balanceDueAt,
+        depositEmailTitle: source.depositEmailTitle,
+        depositEmailBody: source.depositEmailBody,
         backgroundImageDesktopUrl: desktopUrl,
         backgroundImageMobileUrl: mobileUrl,
         createdByAdminId: req.admin!.id,
@@ -338,6 +359,7 @@ adminFormsRouter.post(
           create: source.ticketTypes.map((ticket) => ({
             name: ticket.name,
             priceCents: ticket.priceCents,
+            depositCents: ticket.depositCents,
             currency: ticket.currency,
             capacity: ticket.capacity,
             sortOrder: ticket.sortOrder,
@@ -464,6 +486,7 @@ adminFormsRouter.post(
         formId: form.id,
         name: body.name,
         priceCents: body.priceCents,
+        depositCents: body.depositCents ?? null,
         capacity: body.capacity ?? null,
         sortOrder: body.sortOrder,
         isActive: body.isActive,
@@ -481,12 +504,18 @@ adminFormsRouter.patch(
     const body = updateTicketTypeRequest.parse(req.body);
     const ticket = form.ticketTypes.find((t) => t.id === req.params.ticketId);
     if (!ticket) throw notFound('Nie znaleziono typu biletu');
+    const deposit = depositError(
+      body.priceCents ?? ticket.priceCents,
+      body.depositCents !== undefined ? body.depositCents : ticket.depositCents,
+    );
+    if (deposit) throw badRequest(deposit, { depositCents: deposit });
 
     const updated = await prisma.ticketType.update({
       where: { id: ticket.id },
       data: {
         ...(body.name !== undefined ? { name: body.name } : {}),
         ...(body.priceCents !== undefined ? { priceCents: body.priceCents } : {}),
+        ...(body.depositCents !== undefined ? { depositCents: body.depositCents ?? null } : {}),
         ...(body.capacity !== undefined ? { capacity: body.capacity ?? null } : {}),
         ...(body.sortOrder !== undefined ? { sortOrder: body.sortOrder } : {}),
         ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
@@ -616,7 +645,13 @@ async function submissionDetail(formId: string, submissionId: string) {
   });
   if (!found) throw notFound('Nie znaleziono zgłoszenia');
   // Nonce biletu i hash tokenu nie są potrzebne w panelu — nie wysyłamy ich do przeglądarki.
-  const { ticketNonce, publicTokenHash: _publicTokenHash, checkedInStation, ...submission } = found;
+  const {
+    ticketNonce,
+    publicTokenHash: _publicTokenHash,
+    emailTokenHash: _emailTokenHash,
+    checkedInStation,
+    ...submission
+  } = found;
   return {
     ...submission,
     schemaSnapshotJson: parseFormSchema(submission.schemaSnapshotJson),
@@ -627,7 +662,7 @@ async function submissionDetail(formId: string, submissionId: string) {
 }
 
 const submissionFilterQuery = z.object({
-  status: z.enum(['RESERVED', 'PAID', 'EXPIRED', 'CANCELLED']).optional(),
+  status: z.enum(['RESERVED', 'DEPOSIT_PAID', 'PAID', 'EXPIRED', 'CANCELLED']).optional(),
   q: z.string().trim().min(1).max(320).optional(),
 });
 
@@ -686,6 +721,8 @@ adminFormsRouter.get(
           currency: true,
           discountCodeSnapshot: true,
           discountAmountCents: true,
+          depositCents: true,
+          paidCents: true,
           status: true,
           reservationExpiresAt: true,
           createdAt: true,
@@ -697,15 +734,20 @@ adminFormsRouter.get(
         by: ['status'],
         where: baseWhere,
         _count: { _all: true },
-        _sum: { ticketPriceCents: true },
+        _sum: { ticketPriceCents: true, paidCents: true },
       }),
     ]);
 
-    const statusCounts = { RESERVED: 0, PAID: 0, EXPIRED: 0, CANCELLED: 0 };
+    // Przychód = faktyczne wpłaty (także zaliczki); reszta zaliczkowiczów to kwota do dopłaty.
+    const statusCounts = { RESERVED: 0, DEPOSIT_PAID: 0, PAID: 0, EXPIRED: 0, CANCELLED: 0 };
     let paidRevenueCents = 0;
+    let outstandingCents = 0;
     for (const row of grouped) {
       statusCounts[row.status] = row._count._all;
-      if (row.status === 'PAID') paidRevenueCents = row._sum.ticketPriceCents ?? 0;
+      paidRevenueCents += row._sum.paidCents ?? 0;
+      if (row.status === 'DEPOSIT_PAID') {
+        outstandingCents = (row._sum.ticketPriceCents ?? 0) - (row._sum.paidCents ?? 0);
+      }
     }
 
     res.json({
@@ -718,9 +760,12 @@ adminFormsRouter.get(
       })),
       statusCounts,
       paidRevenueCents,
+      outstandingCents,
     });
   }),
 );
+
+const plnCell = (cents: number) => (cents / 100).toFixed(2).replace('.', ',');
 
 adminFormsRouter.get(
   '/:id/submissions.csv',
@@ -774,6 +819,9 @@ adminFormsRouter.get(
       'waluta',
       'kod_rabatowy',
       'rabat_pln',
+      'zaliczka_pln',
+      'wplacono_pln',
+      'do_doplaty_pln',
       'regulamin_wersja',
       'polityka_wersja',
       'akceptacja_czas',
@@ -795,6 +843,9 @@ adminFormsRouter.get(
         submission.currency,
         submission.discountCodeSnapshot ?? '',
         (submission.discountAmountCents / 100).toFixed(2).replace('.', ','),
+        submission.depositCents !== null ? plnCell(submission.depositCents) : '',
+        plnCell(submission.paidCents),
+        submission.status === 'DEPOSIT_PAID' ? plnCell(submission.ticketPriceCents - submission.paidCents) : '',
         submission.termsVersionAccepted,
         submission.privacyPolicyVersionAccepted,
         submission.legalAcceptedAt.toISOString(),
@@ -863,5 +914,55 @@ adminFormsRouter.patch(
     }
 
     res.json({ submission: await submissionDetail(form.id, updated.id) });
+  }),
+);
+
+const formatPln = (cents: number) =>
+  new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' }).format(cents / 100);
+
+/** Dopłata przyjęta poza Paynow (gotówka, przelew) — zgłoszenie staje się opłacone i dostaje bilet. */
+adminFormsRouter.post(
+  '/:id/submissions/:submissionId/balance-payment',
+  asyncHandler(async (req, res) => {
+    const form = await getFormOr404(req.params.id as string);
+    const submission = await prisma.submission.findFirst({
+      where: { id: req.params.submissionId as string, formId: form.id },
+    });
+    if (!submission) throw notFound('Nie znaleziono zgłoszenia');
+
+    const payment = await recordManualBalancePayment(submission.id);
+    await audit(req, {
+      action: 'submission.balance_payment',
+      formId: form.id,
+      entityId: submission.id,
+      summary: `Odnotowano dopłatę ${formatPln(payment.amountCents)} za zgłoszenie ${ticketReference(submission.id)} (${submission.buyerEmail})`,
+      details: { paymentId: payment.id, amountCents: payment.amountCents },
+    });
+    res.json({ submission: await submissionDetail(form.id, submission.id) });
+  }),
+);
+
+/** Ponowna wysyłka e-maila z linkiem do dopłaty — poprzedni link przestaje działać. */
+adminFormsRouter.post(
+  '/:id/submissions/:submissionId/deposit-email',
+  asyncHandler(async (req, res) => {
+    const form = await getFormOr404(req.params.id as string);
+    const submission = await prisma.submission.findFirst({
+      where: { id: req.params.submissionId as string, formId: form.id },
+    });
+    if (!submission) throw notFound('Nie znaleziono zgłoszenia');
+    if (submission.status !== 'DEPOSIT_PAID') {
+      throw conflict('Link do dopłaty można wysłać tylko przy wpłaconej zaliczce', 'NOT_DEPOSIT_PAID');
+    }
+    if (!(await sendDepositEmail(submission.id, { resend: true }))) {
+      throw conflict('Nie udało się wysłać e-maila — spróbuj ponownie', 'EMAIL_FAILED');
+    }
+    await audit(req, {
+      action: 'submission.deposit_email',
+      formId: form.id,
+      entityId: submission.id,
+      summary: `Wysłano ponownie link do dopłaty dla ${ticketReference(submission.id)} (${submission.buyerEmail})`,
+    });
+    res.json({ submission: await submissionDetail(form.id, submission.id) });
   }),
 );

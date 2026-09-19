@@ -26,7 +26,7 @@ import type {
   StationMeDto,
   StationStatsDto,
 } from '@syjonevent/shared';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, formatPln } from '../lib/api';
 import { useDebouncedValue } from '../lib/hooks';
 import {
   CameraError,
@@ -487,7 +487,9 @@ export default function Scanner() {
                 return (
                   <>
                     <Icon className="h-16 w-16" aria-hidden />
-                    <h2 className="mt-4 text-4xl font-extrabold leading-tight">{style.title}</h2>
+                    <h2 className="mt-4 text-4xl font-extrabold leading-tight">
+                      {overlay.data.reason === 'BALANCE_DUE' ? 'Nieopłacone w całości' : style.title}
+                    </h2>
                     <p className="mt-2 text-lg text-white/90">{overlay.data.message}</p>
                     {overlay.data.participant && (
                       <div className="mt-8 rounded-3xl bg-black/15 p-5">
@@ -498,7 +500,9 @@ export default function Scanner() {
                       <p className="mt-6 text-sm text-white/80">
                         {overlay.data.result === 'DUPLICATE'
                           ? 'Sprawdź dokument tożsamości. Jeśli to inna osoba z tym samym kodem, nie wpuszczaj i skontaktuj się z organizatorem.'
-                          : overlay.data.result === 'EXPIRED'
+                          : overlay.data.reason === 'BALANCE_DUE'
+                            ? 'Nie wpuszczaj — organizator może przyjąć dopłatę i odnotować ją w panelu.'
+                            : overlay.data.result === 'EXPIRED'
                             ? 'Poproś o najnowszy e-mail z biletem albo wyszukaj osobę ręcznie.'
                             : 'Poproś o bilet z e-maila lub wyszukaj osobę ręcznie po nazwisku.'}
                       </p>
@@ -571,7 +575,11 @@ export default function Scanner() {
                         {participant.ticketName} · {participant.maskedEmail}
                       </p>
                     </div>
-                    {participant.checkedInAt ? (
+                    {participant.balanceDueCents !== null ? (
+                      <span className="shrink-0 rounded-full bg-red-500/20 px-2.5 py-1 text-xs font-semibold text-red-300">
+                        do dopłaty {formatPln(participant.balanceDueCents)}
+                      </span>
+                    ) : participant.checkedInAt ? (
                       <span className="shrink-0 rounded-full bg-amber-500/20 px-2.5 py-1 text-xs font-semibold text-amber-300">
                         wejście {timeFormat.format(new Date(participant.checkedInAt))}
                       </span>

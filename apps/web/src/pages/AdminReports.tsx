@@ -3,7 +3,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, ChartBar, ClipboardList, LoaderCircle, Printer, UserX, type LucideIcon } from 'lucide-react';
 import type { EventReportDto } from '@syjonevent/shared';
 import { useToast } from '../components/ui/Toast';
-import { api, ApiError, formatDate, formatDateTime } from '../lib/api';
+import { api, ApiError, formatDate, formatDateTime, formatPln } from '../lib/api';
 
 type ReportKind = 'lista' | 'odpowiedzi' | 'nieobecni';
 
@@ -93,6 +93,17 @@ export default function AdminReports() {
               {report.form.location && ` · ${report.form.location}`}
             </p>
             <p className="text-xs text-slate-400">Stan na {formatDateTime(report.generatedAt)}</p>
+            <p className="mt-1 text-sm text-slate-600">
+              Wpłaty: <strong>{formatPln(report.finance.receivedCents)}</strong>
+              {report.finance.depositPaidCount > 0 && (
+                <>
+                  {' '}
+                  · Do dopłaty: <strong>{formatPln(report.finance.outstandingCents)}</strong> (
+                  {report.finance.depositPaidCount} {report.finance.depositPaidCount === 1 ? 'osoba' : 'os.'} z samą
+                  zaliczką — nie ma ich na liście, dopóki nie dopłacą)
+                </>
+              )}
+            </p>
           </header>
 
           {kind === 'lista' && (

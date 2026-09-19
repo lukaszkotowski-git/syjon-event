@@ -21,10 +21,11 @@ async function getFormOr404(formId: unknown) {
   return form;
 }
 
-/** Odbiorcy: opłaceni i/lub osoby z ważną rezerwacją, opcjonalnie tylko wybrane bilety. */
+/** Odbiorcy: opłaceni, osoby z samą zaliczką i/lub z ważną rezerwacją, opcjonalnie tylko wybrane bilety. */
 function recipientsWhere(formId: string, audience: MessageAudience, now = new Date()): Prisma.SubmissionWhereInput {
   const statusFilters: Prisma.SubmissionWhereInput[] = [];
   if (audience.statuses.includes('PAID')) statusFilters.push({ status: 'PAID' });
+  if (audience.statuses.includes('DEPOSIT_PAID')) statusFilters.push({ status: 'DEPOSIT_PAID' });
   if (audience.statuses.includes('RESERVED')) {
     statusFilters.push({ status: 'RESERVED', reservationExpiresAt: { gt: now } });
   }

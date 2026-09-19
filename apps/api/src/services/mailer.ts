@@ -287,6 +287,48 @@ export function buildPaidConfirmationEmail(data: TicketEmailData & { formSlug: s
   return { subject, html: shellHtml(heading, bodyHtml), text };
 }
 
+export function formatDueDate(date: Date): string {
+  return new Intl.DateTimeFormat('pl-PL', { dateStyle: 'long', timeZone: 'Europe/Warsaw' }).format(date);
+}
+
+/** Wpłacona zaliczka — bez biletu QR, z kwotą i terminem dopłaty oraz linkiem do niej. */
+export function buildDepositConfirmationEmail(
+  data: TicketEmailData & { paidCents: number; balanceCents: number; balanceDueAt: Date | null; balanceUrl: string },
+): EmailContent {
+  const heading = resolveTitle('Zaliczka wpłacona — miejsce zarezerwowane', data.customTitle);
+  const subject = customSubject(data) ?? `Zaliczka wpłacona — ${data.formTitle}`;
+  const paid = formatAmount(data.paidCents, data.currency);
+  const balance = formatAmount(data.balanceCents, data.currency);
+  const due = data.balanceDueAt ? formatDueDate(data.balanceDueAt) : null;
+  const defaultIntro = `Otrzymaliśmy Twoją zaliczkę — miejsce na wydarzeniu jest zarezerwowane. Aby otrzymać bilet wstępu, dopłać pozostałą kwotę ${balance}${due ? ` do ${due}` : ''}.`;
+  const bodyHtml = [
+    introHtml(defaultIntro, data.customBody),
+    ticketDetailsHtml(data),
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0;border:1px solid #dbf3f5;border-radius:12px;overflow:hidden;">
+      <tr><td style="padding:12px 16px 0;font-size:13px;color:#24757a;">Wpłacono</td></tr>
+      <tr><td style="padding:2px 16px 12px;font-size:15px;color:#0d3135;">${escapeHtml(paid)}</td></tr>
+      ${detailRowHtml('Do dopłaty', `<strong>${escapeHtml(balance)}</strong>`)}
+      ${due ? detailRowHtml('Termin dopłaty', escapeHtml(due)) : ''}
+    </table>`,
+    buttonHtml(data.balanceUrl, `Dopłać ${balance}`),
+    `<p style="margin:16px 0 0;font-size:13px;color:#5b7a7d;">Bilet z kodem QR wyślemy po zaksięgowaniu dopłaty. Zachowaj ten link — pod nim dopłacisz resztę i sprawdzisz status zgłoszenia.</p>`,
+  ].join('');
+  const text = [
+    `${heading} — ${data.formTitle}`,
+    '',
+    introText(defaultIntro, data.customBody),
+    '',
+    ...whenWhereText(data),
+    `Bilet: ${data.ticketName} (${formatAmount(data.amountCents, data.currency)})`,
+    `Wpłacono: ${paid}`,
+    `Do dopłaty: ${balance}`,
+    ...(due ? [`Termin dopłaty: ${due}`] : []),
+    '',
+    `Dopłata i status zgłoszenia: ${data.balanceUrl}`,
+  ].join('\n');
+  return { subject, html: shellHtml(heading, bodyHtml), text };
+}
+
 /** Sam bilet — ponowna wysyłka przez organizatora lub nowy kod po unieważnieniu poprzedniego. */
 export function buildTicketEmail(
   data: TicketEmailData & { formSlug: string; ticketQr: TicketQrData; reissued: boolean },

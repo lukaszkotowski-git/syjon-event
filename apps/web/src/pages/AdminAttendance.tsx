@@ -52,6 +52,7 @@ const REASON_LABELS: Record<string, string> = {
   WRONG_EVENT: 'inne wydarzenie',
   REISSUED: 'wystawiono nowy kod',
   NOT_PAID: 'zgłoszenie nieopłacone',
+  BALANCE_DUE: 'wpłacona tylko zaliczka',
 };
 
 const time = new Intl.DateTimeFormat('pl-PL', { hour: '2-digit', minute: '2-digit', second: '2-digit' });

@@ -8,6 +8,7 @@ import {
   CircleCheck,
   CircleX,
   Clock,
+  Coins,
   Copy,
   Download,
   Hourglass,
@@ -19,7 +20,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import type { SubmissionStatusDto } from '@syjonevent/shared';
-import { api, ApiError, formatPln } from '../lib/api';
+import { api, ApiError, formatDate, formatPln } from '../lib/api';
 import { paymentStatusLabel } from '../lib/status';
 import { useToast } from '../components/ui/Toast';
 
@@ -174,8 +175,10 @@ export default function Confirmation() {
     const timer = setInterval(async () => {
       polls.current += 1;
       const data = await load();
-      // Webhook jest źródłem prawdy; odpytujemy, dopóki rezerwacja czeka na płatność.
-      if (!data || data.status !== 'RESERVED' || polls.current >= MAX_POLLS) {
+      // Webhook jest źródłem prawdy; odpytujemy, dopóki rezerwacja albo dopłata czeka na płatność.
+      const balancePending =
+        data?.status === 'DEPOSIT_PAID' && ['NEW', 'PENDING'].includes(data.lastPayment?.status ?? '');
+      if (!data || (data.status !== 'RESERVED' && !balancePending) || polls.current >= MAX_POLLS) {
         clearInterval(timer);
         setPollingDone(true);
       }
@@ -201,7 +204,7 @@ export default function Confirmation() {
       );
       if (data.redirectUrl) window.location.href = data.redirectUrl;
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Nie udało się ponowić płatności');
+      setError(err instanceof ApiError ? err.message : 'Nie udało się rozpocząć płatności');
     } finally {
       setBusy(false);
     }
@@ -225,6 +228,10 @@ export default function Confirmation() {
   // Paynow nie odpowiedział przy tworzeniu płatności — klient jeszcze nie był na bramce.
   const paymentNotStarted = status?.status === 'RESERVED' && !paymentFailed && !status.lastPayment?.redirectUrl;
   const eventUrl = status ? `/f/${status.formSlug}` : '/';
+  const balance = status?.status === 'DEPOSIT_PAID' ? status.balance : null;
+  // Po zaliczce ostatnia płatność to albo sama zaliczka (CONFIRMED), albo próba dopłaty.
+  const balancePending = balance !== null && ['NEW', 'PENDING'].includes(status?.lastPayment?.status ?? '');
+  const balanceFailed = balance !== null && ['REJECTED', 'ERROR', 'ABANDONED', 'EXPIRED'].includes(status?.lastPayment?.status ?? '');
 
   const retryButton = status?.canRetry && (
     <div>
@@ -353,6 +360,89 @@ export default function Confirmation() {
             <div className="space-y-3 border-t border-slate-100 pt-4">
               <p className="text-sm text-slate-500">
                 Zachowaj link do tej strony — pod nim zawsze sprawdzisz status zgłoszenia.
+              </p>
+              <div className="flex flex-wrap justify-center gap-2">
+                <button type="button" className="btn-secondary" onClick={() => void copyPageLink()}>
+                  <Copy className="h-4 w-4" aria-hidden />
+                  Kopiuj link
+                </button>
+                <Link to={eventUrl} className="btn-ghost">
+                  <ArrowLeft className="h-4 w-4" aria-hidden />
+                  Wróć do wydarzenia
+                </Link>
+              </div>
+            </div>
+          </>
+        )}
+
+        {status?.status === 'DEPOSIT_PAID' && balance && (
+          <>
+            <StatusIcon tone="success" icon={Coins} />
+            <h1 className="text-2xl font-bold text-slate-900">Zaliczka wpłacona — miejsce zarezerwowane</h1>
+            <p className="text-slate-600">
+              {balance.canPayOnline
+                ? `Aby otrzymać bilet wstępu, dopłać pozostałą kwotę${balance.dueAt ? ` do ${formatDate(balance.dueAt)}` : ''}. Bilet z kodem QR wyślemy zaraz po dopłacie.`
+                : 'Termin dopłaty minął. Aby dopłacić resztę i otrzymać bilet, skontaktuj się z organizatorem wydarzenia.'}
+            </p>
+            <div className="space-y-2 rounded-2xl border border-brand-100 bg-brand-50/60 p-4 text-left">
+              {status.buyerName && (
+                <SummaryRow label="Uczestnik">
+                  <span className="font-semibold text-slate-900">{status.buyerName}</span>
+                </SummaryRow>
+              )}
+              <SummaryRow label="Bilet">
+                <span className="font-semibold text-slate-900">
+                  {status.ticketName} · {formatPln(status.amountCents)}
+                </span>
+              </SummaryRow>
+              {status.discountCodeSnapshot && (
+                <SummaryRow label="Kod rabatowy">
+                  <span className="font-mono text-sm font-semibold text-emerald-700">
+                    {status.discountCodeSnapshot} (-{formatPln(status.discountAmountCents)})
+                  </span>
+                </SummaryRow>
+              )}
+              <SummaryRow label="Wpłacono">
+                <span className="font-semibold text-slate-900">{formatPln(balance.paidCents)}</span>
+              </SummaryRow>
+              <SummaryRow label="Do dopłaty" className="border-t border-brand-100 pt-2">
+                <span className="text-lg font-bold text-brand-800">{formatPln(balance.balanceCents)}</span>
+              </SummaryRow>
+              {balance.dueAt && (
+                <SummaryRow label="Termin dopłaty">
+                  <span className={`font-semibold ${balance.canPayOnline ? 'text-slate-900' : 'text-red-700'}`}>
+                    {formatDate(balance.dueAt)}
+                  </span>
+                </SummaryRow>
+              )}
+            </div>
+            {balance.canPayOnline && balancePending && (
+              <p className="text-sm text-slate-500">
+                {pollingDone
+                  ? 'Potwierdzenie dopłaty jeszcze nie dotarło — sprawdź status ponownie za chwilę.'
+                  : 'Czekamy na potwierdzenie dopłaty. Strona odświeża status automatycznie.'}
+              </p>
+            )}
+            {balance.canPayOnline && balanceFailed && (
+              <p className="text-sm text-red-700">Ostatnia próba dopłaty nie doszła do skutku — możesz spróbować ponownie.</p>
+            )}
+            {balance.canPayOnline && (
+              <div className="flex flex-wrap justify-center gap-2">
+                <button className="btn-primary" onClick={retry} disabled={busy}>
+                  <Coins className="h-4 w-4" aria-hidden />
+                  {busy ? 'Przekierowanie…' : `Dopłać ${formatPln(status.amountDueCents)}`}
+                </button>
+                {balancePending && pollingDone && (
+                  <button type="button" className="btn-secondary" onClick={() => void checkAgain()} disabled={checking}>
+                    <RefreshCw className={`h-4 w-4 ${checking ? 'animate-spin' : ''}`} aria-hidden />
+                    {checking ? 'Sprawdzam…' : 'Sprawdź ponownie'}
+                  </button>
+                )}
+              </div>
+            )}
+            <div className="space-y-3 border-t border-slate-100 pt-4">
+              <p className="text-sm text-slate-500">
+                Zachowaj link do tej strony — pod nim dopłacisz resztę i sprawdzisz status zgłoszenia.
               </p>
               <div className="flex flex-wrap justify-center gap-2">
                 <button type="button" className="btn-secondary" onClick={() => void copyPageLink()}>

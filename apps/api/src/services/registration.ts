@@ -2,6 +2,7 @@ import type { DiscountCode, Form, Submission, TicketType } from '@prisma/client'
 import {
   applyDiscount,
   buildAnswersSchema,
+  depositSplit,
   EMPTY_FORM_SCHEMA,
   flattenSections,
   formSchemaJson,
@@ -96,6 +97,11 @@ export async function createRegistration(
     const discountAmountCents = ticketType.priceCents - finalPriceCents;
 
     const isFree = finalPriceCents === 0;
+    // Zaliczka tylko przed terminem dopłaty — po nim nie dałoby się już dopłacić online.
+    const split =
+      body.paymentOption === 'DEPOSIT' && form.balanceDueAt !== null && form.balanceDueAt > now
+        ? depositSplit(finalPriceCents, ticketType.depositCents)
+        : null;
 
     const submission = await tx.submission.create({
       data: {
@@ -107,6 +113,7 @@ export async function createRegistration(
         discountCodeId: discountCode?.id ?? null,
         discountCodeSnapshot: discountCode?.code ?? null,
         discountAmountCents,
+        depositCents: split?.depositCents ?? null,
         buyerEmail: body.buyer.email,
         buyerPhone: body.buyer.phone ?? null,
         buyerAddress: body.buyer.address ?? null,
@@ -131,6 +138,18 @@ export async function createRegistration(
   return { ...result, publicToken };
 }
 
+/** Kwota, którą zgłoszenie ma teraz zapłacić: zaliczka, reszta po zaliczce albo całość. */
+export function amountDueCents(submission: Pick<Submission, 'status' | 'ticketPriceCents' | 'depositCents' | 'paidCents'>): number {
+  if (submission.status === 'DEPOSIT_PAID') return Math.max(0, submission.ticketPriceCents - submission.paidCents);
+  if (submission.status === 'RESERVED') return submission.depositCents ?? submission.ticketPriceCents;
+  return 0;
+}
+
+/** Dopłatę online przyjmujemy do końca dnia terminu (termin jest zapisywany jako koniec dnia). */
+export function canPayBalanceOnline(form: Pick<Form, 'balanceDueAt'>, now = new Date()): boolean {
+  return form.balanceDueAt !== null && form.balanceDueAt > now;
+}
+
 /** Wygasła rezerwacja jest materializowana leniwie — przy każdym odczycie. */
 export async function materializeExpiry(submission: Submission, now = new Date()): Promise<Submission> {
   if (
@@ -143,8 +162,10 @@ export async function materializeExpiry(submission: Submission, now = new Date()
   return submission;
 }
 
+/** Akceptuje token z rejestracji albo token z linku dopłaty w e-mailu. */
 export function assertPublicToken(submission: Submission, token: string | undefined): void {
-  if (!token || submission.publicTokenHash !== hashPublicToken(token)) {
+  const hash = token ? hashPublicToken(token) : null;
+  if (!hash || (submission.publicTokenHash !== hash && submission.emailTokenHash !== hash)) {
     throw notFound('Nie znaleziono zgłoszenia');
   }
 }

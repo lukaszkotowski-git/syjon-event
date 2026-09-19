@@ -15,6 +15,14 @@ export const EMAIL_BUILTIN_VARIABLES = [
   { name: 'numer_biletu', label: 'Numer biletu' },
 ] as const;
 
+/** Dodatkowe znaczniki e-maila po wpłacie zaliczki. */
+export const DEPOSIT_EMAIL_VARIABLES = [
+  { name: 'kwota_zaliczki', label: 'Wpłacona zaliczka' },
+  { name: 'kwota_doplaty', label: 'Kwota do dopłaty' },
+  { name: 'termin_doplaty', label: 'Termin dopłaty' },
+  { name: 'link_doplaty', label: 'Link do dopłaty' },
+] as const;
+
 const PLACEHOLDER = /\{\{\s*([^{}]+?)\s*\}\}/g;
 
 /** "Imię i nazwisko" / "imię" / " IMIE " → "imie_i_nazwisko" / "imie" / "imie". */
@@ -51,7 +59,9 @@ export function formFieldVariables(sections: FormSection[]): TemplateVariableOpt
 
 /** Wszystkie nazwy, które coś podstawią — do ostrzegania o literówkach w edytorze. */
 export function knownVariableNames(sections: FormSection[]): Set<string> {
-  const names = new Set<string>(EMAIL_BUILTIN_VARIABLES.map((variable) => variable.name));
+  const names = new Set<string>(
+    [...EMAIL_BUILTIN_VARIABLES, ...DEPOSIT_EMAIL_VARIABLES].map((variable) => variable.name),
+  );
   for (const field of flattenSections(sections)) {
     names.add(field.key);
     names.add(normalizeVariableName(field.label));

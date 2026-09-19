@@ -28,10 +28,19 @@ adminReportsRouter.get(
     if (!form) throw notFound('Nie znaleziono wydarzenia');
 
     // Raporty dotyczą osób, które mają bilet — rezerwacje bez płatności pomijamy.
-    const submissions = await prisma.submission.findMany({
-      where: { formId: form.id, status: 'PAID' },
-      orderBy: { createdAt: 'asc' },
-    });
+    const [submissions, finance] = await Promise.all([
+      prisma.submission.findMany({
+        where: { formId: form.id, status: 'PAID' },
+        orderBy: { createdAt: 'asc' },
+      }),
+      prisma.submission.groupBy({
+        by: ['status'],
+        where: { formId: form.id },
+        _count: { _all: true },
+        _sum: { ticketPriceCents: true, paidCents: true },
+      }),
+    ]);
+    const depositRow = finance.find((row) => row.status === 'DEPOSIT_PAID');
 
     const participants = submissions
       .map((s) => ({
@@ -85,6 +94,11 @@ adminReportsRouter.get(
     const dto: EventReportDto = {
       form: { id: form.id, title: form.title, eventDate: form.eventDate.toISOString(), location: form.location },
       generatedAt: new Date().toISOString(),
+      finance: {
+        receivedCents: finance.reduce((sum, row) => sum + (row._sum.paidCents ?? 0), 0),
+        outstandingCents: (depositRow?._sum.ticketPriceCents ?? 0) - (depositRow?._sum.paidCents ?? 0),
+        depositPaidCount: depositRow?._count._all ?? 0,
+      },
       participants,
       answerSummaries,
       consentSummaries,

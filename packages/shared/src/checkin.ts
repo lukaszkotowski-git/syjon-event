@@ -12,6 +12,7 @@ export type CheckInReason =
   | 'WRONG_EVENT'
   | 'REISSUED'
   | 'NOT_PAID'
+  | 'BALANCE_DUE'
   | 'ALREADY_CHECKED_IN';
 
 export const STATION_PIN_LENGTH = 6;
@@ -52,6 +53,8 @@ export interface CheckInParticipantDto {
   ticketReference: string;
   checkedInAt: string | null;
   checkedInStationName: string | null;
+  /** Kwota do dopłaty, gdy wpłacono tylko zaliczkę; null = opłacone w całości. */
+  balanceDueCents: number | null;
 }
 
 export interface ScanResultDto {

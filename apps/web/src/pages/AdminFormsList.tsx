@@ -6,6 +6,7 @@ import {
   CalendarDays,
   CalendarPlus,
   CircleCheck,
+  Coins,
   Copy,
   CopyPlus,
   ExternalLink,
@@ -41,6 +42,7 @@ interface FormRow {
   capacityTotal: number | null;
   paidCount: number;
   reservedCount: number;
+  depositPaidCount: number;
   submissionCount: number;
   thumbnailUrl: string | null;
   createdByEmail: string | null;
@@ -290,10 +292,12 @@ export default function AdminFormsList() {
 
       <div className="grid gap-3">
         {visible.map((form) => {
-          const taken = form.paidCount + form.reservedCount;
+          // Zaliczka zajmuje miejsce tak samo jak rezerwacja — na pasku pokazujemy je razem.
+          const pendingCount = form.reservedCount + form.depositPaidCount;
+          const taken = form.paidCount + pendingCount;
           const capacity = form.capacityTotal;
           const paidPercent = capacity ? Math.min(100, (form.paidCount / capacity) * 100) : 0;
-          const reservedPercent = capacity ? Math.min(100 - paidPercent, (form.reservedCount / capacity) * 100) : 0;
+          const reservedPercent = capacity ? Math.min(100 - paidPercent, (pendingCount / capacity) * 100) : 0;
           const closed = new Date(form.closesAt) <= new Date();
           const busy = busyId === form.id;
 
@@ -390,6 +394,12 @@ export default function AdminFormsList() {
                     <CircleCheck className="h-4 w-4 text-emerald-500" aria-hidden />
                     {plural(form.paidCount, 'opłacone', 'opłacone', 'opłaconych')}
                   </span>
+                  {form.depositPaidCount > 0 && (
+                    <span className="inline-flex items-center gap-1.5">
+                      <Coins className="h-4 w-4 text-amber-500" aria-hidden />
+                      {plural(form.depositPaidCount, 'zaliczka', 'zaliczki', 'zaliczek')}
+                    </span>
+                  )}
                   {form.reservedCount > 0 && (
                     <span className="inline-flex items-center gap-1.5">
                       <Hourglass className="h-4 w-4 text-blue-500" aria-hidden />
