@@ -301,11 +301,9 @@ export default function Confirmation() {
                   {status.amountCents === 0 ? 'Bezpłatny' : formatPln(status.amountCents)}
                 </span>
               </SummaryRow>
-              {status.discountCodeSnapshot && (
-                <SummaryRow label="Kod rabatowy" className="border-t border-brand-100 pt-2">
-                  <span className="font-mono text-sm font-semibold text-emerald-700">
-                    {status.discountCodeSnapshot} (-{formatPln(status.discountAmountCents)})
-                  </span>
+              {status.discountAmountCents > 0 && (
+                <SummaryRow label="Rabat" className="border-t border-brand-100 pt-2">
+                  <span className="text-sm font-semibold text-emerald-700">-{formatPln(status.discountAmountCents)}</span>
                 </SummaryRow>
               )}
             </div>
@@ -395,11 +393,9 @@ export default function Confirmation() {
                   {status.ticketName} · {formatPln(status.amountCents)}
                 </span>
               </SummaryRow>
-              {status.discountCodeSnapshot && (
-                <SummaryRow label="Kod rabatowy">
-                  <span className="font-mono text-sm font-semibold text-emerald-700">
-                    {status.discountCodeSnapshot} (-{formatPln(status.discountAmountCents)})
-                  </span>
+              {status.discountAmountCents > 0 && (
+                <SummaryRow label="Rabat">
+                  <span className="text-sm font-semibold text-emerald-700">-{formatPln(status.discountAmountCents)}</span>
                 </SummaryRow>
               )}
               <SummaryRow label="Wpłacono">

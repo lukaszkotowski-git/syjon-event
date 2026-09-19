@@ -1014,8 +1014,8 @@ export default function PublicForm() {
                     {appliedDiscount && (
                       <p className="mt-2 flex items-center gap-1.5 border-t border-brand-100 pt-2 text-xs text-emerald-700">
                         <TicketPercent className="h-3.5 w-3.5" aria-hidden />
-                        Kod <span className="font-mono font-semibold">{appliedDiscount.code}</span> — rabat{' '}
-                        {formatPln(appliedDiscount.discountAmountCents)}
+                        {/* Bez treści kodu — podsumowanie łatwo komuś pokazać albo wysłać zrzutem ekranu. */}
+                        Rabat z kodu: -{formatPln(appliedDiscount.discountAmountCents)}
                       </p>
                     )}
                     {payDeposit && split && (

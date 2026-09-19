@@ -290,7 +290,10 @@ export interface SubmissionStatusDto {
   ticketName: string;
   amountCents: number;
   currency: string;
-  discountCodeSnapshot: string | null;
+  /**
+   * Sama kwota rabatu — bez treści kodu. Strona zgłoszenia bywa udostępniana (link, zrzut ekranu),
+   * a kod nie powinien wyciekać dalej.
+   */
   discountAmountCents: number;
   reservationExpiresAt: string | null;
   /** Kwota bieżącej płatności: zaliczka przy rezerwacji z zaliczką, pozostała reszta po niej. */

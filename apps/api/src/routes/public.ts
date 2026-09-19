@@ -267,7 +267,6 @@ publicRouter.get(
       ticketName: fresh.ticketNameSnapshot,
       amountCents: fresh.ticketPriceCents,
       currency: fresh.currency,
-      discountCodeSnapshot: fresh.discountCodeSnapshot,
       discountAmountCents: fresh.discountAmountCents,
       reservationExpiresAt: fresh.reservationExpiresAt?.toISOString() ?? null,
       amountDueCents: amountDueCents(fresh),
