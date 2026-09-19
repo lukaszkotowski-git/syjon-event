@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
 import type { AdminRole } from '@prisma/client';
+import { hasFullAccess } from '@syjonevent/shared';
 import { forbidden, unauthorized } from '../http/errors.js';
 import { prisma } from '../prisma.js';
 import { SESSION_COOKIE, hashSessionToken } from './session.js';
@@ -55,7 +56,12 @@ export async function requireAdmin(req: Request, _res: Response, next: NextFunct
 
 const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
+/** Operacje zarezerwowane dla konta super administratora (np. usuwanie kont). */
+export function requireSuperAdmin(req: Request, _res: Response, next: NextFunction) {
+  next(req.admin?.role === 'SUPER_ADMIN' ? undefined : forbidden('Tę operację może wykonać tylko super administrator'));
+}
+
 /** Dostęp tylko dla pełnych administratorów — np. zarządzanie kontami i dziennik zmian. */
 export function requireFullAdmin(req: Request, _res: Response, next: NextFunction) {
-  next(req.admin?.role === 'ADMIN' ? undefined : forbidden('Ta sekcja jest dostępna tylko dla administratorów'));
+  next(req.admin && hasFullAccess(req.admin.role) ? undefined : forbidden('Ta sekcja jest dostępna tylko dla administratorów'));
 }

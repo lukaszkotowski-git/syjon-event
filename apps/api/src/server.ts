@@ -1,8 +1,10 @@
 import { createApp } from './app.js';
 import { loadEnv } from './env.js';
 import { prisma } from './prisma.js';
+import { syncSuperAdmin } from './services/super-admin.js';
 
 const cfg = loadEnv();
+await syncSuperAdmin();
 const app = createApp();
 
 const server = app.listen(cfg.PORT, () => {

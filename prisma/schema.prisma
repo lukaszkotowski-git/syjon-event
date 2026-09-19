@@ -56,8 +56,10 @@ enum CheckInMethod {
   MANUAL
 }
 
+// SUPER_ADMIN — jedno konto z env (SUPER_ADMIN_EMAIL), nietykalne z poziomu panelu;
 // ADMIN — pełny dostęp; VIEWER — tylko podgląd (np. wolontariusze przy wejściu).
 enum AdminRole {
+  SUPER_ADMIN
   ADMIN
   VIEWER
 }
@@ -67,6 +69,9 @@ model Admin {
   email        String    @unique
   passwordHash String    @map("password_hash")
   role         AdminRole @default(ADMIN)
+  // Odcisk (HMAC) hasła z SUPER_ADMIN_PASSWORD, z którego ostatnio ustawiono hasło konta.
+  // Zmiana hasła w env resetuje hasło przy starcie API; inaczej obowiązuje hasło ustawione w panelu.
+  envPasswordDigest String? @map("env_password_digest")
   createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
   disabledAt   DateTime? @map("disabled_at") @db.Timestamptz(3)

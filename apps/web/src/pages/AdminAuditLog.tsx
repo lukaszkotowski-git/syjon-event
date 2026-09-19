@@ -13,7 +13,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import type { AuditLogEntryDto } from '@syjonevent/shared';
+import { hasFullAccess, type AuditLogEntryDto } from '@syjonevent/shared';
 import Pagination from '../components/ui/Pagination';
 import { useToast } from '../components/ui/Toast';
 import { useAdmin } from '../lib/admin';
@@ -42,7 +42,7 @@ export default function AdminAuditLog() {
   const [data, setData] = useState<{ entries: AuditLogEntryDto[]; total: number } | null>(null);
 
   useEffect(() => {
-    if (me.role !== 'ADMIN') return;
+    if (!hasFullAccess(me.role)) return;
     const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
     if (formId) params.set('formId', formId);
     api
@@ -53,7 +53,7 @@ export default function AdminAuditLog() {
 
   useEffect(() => setPage(1), [formId]);
 
-  if (me.role !== 'ADMIN') return <Navigate to="/admin" replace />;
+  if (!hasFullAccess(me.role)) return <Navigate to="/admin" replace />;
 
   const filteredTitle = formId ? data?.entries.find((e) => e.formId === formId)?.formTitle : null;
 

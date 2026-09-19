@@ -319,8 +319,13 @@ export interface SubmissionStatusDto {
 
 /* ------------------------------ zespół i role ------------------------------ */
 
+/** Role nadawane w panelu. SUPER_ADMIN istnieje tylko jako konto z env — nie da się go nadać ani utworzyć w panelu. */
 export const ADMIN_ROLES = ['ADMIN', 'VIEWER'] as const;
-export type AdminRole = (typeof ADMIN_ROLES)[number];
+export type AssignableAdminRole = (typeof ADMIN_ROLES)[number];
+export type AdminRole = 'SUPER_ADMIN' | AssignableAdminRole;
+
+/** Pełny dostęp do panelu (edycja, zespół, dziennik zmian). */
+export const hasFullAccess = (role: AdminRole): boolean => role === 'ADMIN' || role === 'SUPER_ADMIN';
 
 export interface AdminMeDto {
   id: string;
@@ -348,6 +353,8 @@ export const updateAdminUserRequest = z.object({
   role: z.enum(ADMIN_ROLES).optional(),
   disabled: z.boolean().optional(),
   password: z.string().min(12, 'Hasło musi mieć minimum 12 znaków').max(200).optional(),
+  /** Wymagane, gdy super administrator zmienia własne hasło. */
+  currentPassword: z.string().min(1).max(200).optional(),
 });
 export type UpdateAdminUserRequest = z.infer<typeof updateAdminUserRequest>;
 

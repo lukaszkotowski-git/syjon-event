@@ -41,7 +41,13 @@ async function main() {
     throw new Error('ADMIN_USERS nie zawiera żadnego konta.');
   }
 
+  // Konto super administratora zarządza się wyłącznie przez SUPER_ADMIN_* — seed go nie dotyka.
+  const superAdminEmail = process.env.SUPER_ADMIN_EMAIL?.trim().toLowerCase();
   for (const { email, password } of admins) {
+    if (email === superAdminEmail) {
+      console.log(`[seed] pominięto ${email} — to konto super administratora (SUPER_ADMIN_*)`);
+      continue;
+    }
     const passwordHash = await bcrypt.hash(password, 12);
     await prisma.admin.upsert({
       where: { email },

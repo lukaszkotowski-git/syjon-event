@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { DEFAULT_RESERVATION_SECONDS } from '@syjonevent/shared';
 
+const emptyToUndefined = (value: unknown) => (value === '' ? undefined : value);
+
 /** Konfiguracja z env — walidowana raz przy starcie, żeby nie wywalić się w runtime. */
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -30,6 +32,16 @@ const envSchema = z.object({
   SMTP_USER: z.string().min(1),
   SMTP_PASSWORD: z.string().min(1),
   MAIL_FROM: z.string().min(1),
+  // Konto super administratora — tworzone przy starcie API, nie da się go utworzyć w panelu.
+  // Pusta wartość (np. niezdefiniowana zmienna w docker compose) = brak konta.
+  SUPER_ADMIN_EMAIL: z.preprocess(emptyToUndefined, z.string().trim().toLowerCase().email().optional()),
+  SUPER_ADMIN_PASSWORD: z.preprocess(
+    emptyToUndefined,
+    z.string().min(12, 'SUPER_ADMIN_PASSWORD musi mieć minimum 12 znaków').optional(),
+  ),
+}).refine((v) => Boolean(v.SUPER_ADMIN_EMAIL) === Boolean(v.SUPER_ADMIN_PASSWORD), {
+  message: 'SUPER_ADMIN_EMAIL i SUPER_ADMIN_PASSWORD trzeba ustawić razem',
+  path: ['SUPER_ADMIN_EMAIL'],
 });
 
 export type Env = z.infer<typeof envSchema> & { PAYNOW_BASE_URL: string };

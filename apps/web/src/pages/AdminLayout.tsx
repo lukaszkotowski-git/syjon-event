@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { CalendarRange, ChartColumn, Eye, History, LogOut, UsersRound } from 'lucide-react';
-import type { AdminMeDto } from '@syjonevent/shared';
+import { hasFullAccess, type AdminMeDto } from '@syjonevent/shared';
 import { AdminContext } from '../lib/admin';
 import { api } from '../lib/api';
 
@@ -75,7 +75,7 @@ export default function AdminLayout() {
             </div>
           </div>
           <nav className="mx-auto flex max-w-6xl gap-5 overflow-x-auto px-4 sm:px-6">
-            {NAV_TABS.filter((tab) => !tab.adminOnly || admin.role === 'ADMIN').map((tab) => (
+            {NAV_TABS.filter((tab) => !tab.adminOnly || hasFullAccess(admin.role)).map((tab) => (
               <NavLink
                 key={tab.to}
                 to={tab.to}

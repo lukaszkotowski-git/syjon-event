@@ -1,19 +1,19 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Navigate } from 'react-router-dom';
-import { Ban, Ellipsis, KeyRound, LoaderCircle, RotateCcw, ShieldCheck, UserPlus } from 'lucide-react';
-import type { AdminRole, AdminUserDto } from '@syjonevent/shared';
+import { Ban, Crown, Ellipsis, KeyRound, LoaderCircle, RotateCcw, ShieldCheck, Trash2, UserPlus } from 'lucide-react';
+import { hasFullAccess, type AdminUserDto, type AssignableAdminRole } from '@syjonevent/shared';
 import { useConfirm } from '../components/ui/ConfirmDialog';
 import Menu from '../components/ui/Menu';
 import { useToast } from '../components/ui/Toast';
 import { useAdmin } from '../lib/admin';
 import { api, ApiError, formatDateTime } from '../lib/api';
 
-const ROLE_OPTIONS: { value: AdminRole; label: string; description: string }[] = [
+const ROLE_OPTIONS: { value: AssignableAdminRole; label: string; description: string }[] = [
   { value: 'ADMIN', label: 'Administrator', description: 'Pełny dostęp: wydarzenia, zgłoszenia, wiadomości, zespół.' },
   { value: 'VIEWER', label: 'Tylko podgląd', description: 'Widzi wydarzenia, zgłoszenia i raporty, ale niczego nie zmienia.' },
 ];
 
-const roleLabel = (role: AdminRole) => ROLE_OPTIONS.find((option) => option.value === role)?.label ?? role;
+const roleLabel = (role: AssignableAdminRole) => ROLE_OPTIONS.find((option) => option.value === role)?.label ?? role;
 
 /** Losowe hasło startowe — admin przekazuje je osobie, która może je potem zmienić przez administratora. */
 function generatePassword(): string {
@@ -29,18 +29,19 @@ export default function AdminTeam() {
   const [admins, setAdmins] = useState<AdminUserDto[] | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState(generatePassword);
-  const [role, setRole] = useState<AdminRole>('VIEWER');
+  const [role, setRole] = useState<AssignableAdminRole>('VIEWER');
   const [busy, setBusy] = useState(false);
+  const [ownPassword, setOwnPassword] = useState<{ current: string; next: string; repeat: string } | null>(null);
 
   useEffect(() => {
-    if (me.role !== 'ADMIN') return;
+    if (!hasFullAccess(me.role)) return;
     api
       .get<{ admins: AdminUserDto[] }>('/api/admins')
       .then((data) => setAdmins(data.admins))
       .catch((error) => toast.error(error instanceof ApiError ? error.message : 'Nie udało się pobrać zespołu'));
   }, [me.role, toast]);
 
-  if (me.role !== 'ADMIN') return <Navigate to="/admin" replace />;
+  if (!hasFullAccess(me.role)) return <Navigate to="/admin" replace />;
 
   function replace(updated: AdminUserDto) {
     setAdmins((prev) => prev?.map((a) => (a.id === updated.id ? updated : a)) ?? prev);
@@ -67,7 +68,10 @@ export default function AdminTeam() {
     }
   }
 
-  async function update(admin: AdminUserDto, patch: { role?: AdminRole; disabled?: boolean; password?: string }) {
+  async function update(
+    admin: AdminUserDto,
+    patch: { role?: AssignableAdminRole; disabled?: boolean; password?: string; currentPassword?: string },
+  ) {
     try {
       const data = await api.patch<{ admin: AdminUserDto }>(`/api/admins/${admin.id}`, patch);
       replace(data.admin);
@@ -78,7 +82,7 @@ export default function AdminTeam() {
     }
   }
 
-  async function changeRole(admin: AdminUserDto, nextRole: AdminRole) {
+  async function changeRole(admin: AdminUserDto, nextRole: AssignableAdminRole) {
     if (await update(admin, { role: nextRole })) toast.success(`${admin.email}: ${roleLabel(nextRole).toLowerCase()}`);
   }
 
@@ -114,6 +118,41 @@ export default function AdminTeam() {
     }
   }
 
+  async function deleteAccount(admin: AdminUserDto) {
+    const ok = await confirm({
+      title: `Usunąć konto ${admin.email}?`,
+      description:
+        'Konto zostanie trwale usunięte, a osoba od razu wylogowana. Wpisy w dzienniku zmian i utworzone wydarzenia zostaną zachowane.',
+      confirmLabel: 'Usuń konto',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    try {
+      await api.delete(`/api/admins/${admin.id}`);
+      setAdmins((prev) => prev?.filter((a) => a.id !== admin.id) ?? prev);
+      toast.success(`Usunięto konto ${admin.email}`);
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : 'Nie udało się usunąć konta');
+    }
+  }
+
+  /** Super administrator zmienia własne hasło — z potwierdzeniem obecnego. */
+  async function changeOwnPassword(event: FormEvent) {
+    event.preventDefault();
+    const self = admins?.find((a) => a.id === me.id);
+    if (!self || !ownPassword) return;
+    if (ownPassword.next !== ownPassword.repeat) {
+      toast.error('Nowe hasła się różnią');
+      return;
+    }
+    setBusy(true);
+    if (await update(self, { password: ownPassword.next, currentPassword: ownPassword.current })) {
+      toast.success('Hasło zmienione — pozostałe urządzenia zostały wylogowane');
+      setOwnPassword(null);
+    }
+    setBusy(false);
+  }
+
   return (
     <section className="space-y-5">
       <div>
@@ -131,6 +170,7 @@ export default function AdminTeam() {
           <ul className="divide-y divide-slate-100">
             {admins.map((admin) => {
               const isMe = admin.id === me.id;
+              const isSuper = admin.role === 'SUPER_ADMIN';
               return (
                 <li key={admin.id} className="flex flex-wrap items-center gap-3 px-4 py-3.5 sm:px-5">
                   <div className="min-w-0 flex-1">
@@ -143,20 +183,38 @@ export default function AdminTeam() {
                       {admin.disabled && ' · zablokowane'}
                     </p>
                   </div>
-                  <select
-                    className="input w-auto py-2 pr-8"
-                    aria-label={`Rola: ${admin.email}`}
-                    value={admin.role}
-                    disabled={isMe}
-                    onChange={(e) => void changeRole(admin, e.target.value as AdminRole)}
-                  >
-                    {ROLE_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  {!isMe && (
+                  {/* Konto super administratora pochodzi z env — w panelu nie zmienia się jego roli ani blokady. */}
+                  {isSuper ? (
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1.5 text-sm font-medium text-amber-900">
+                      <Crown className="h-4 w-4" aria-hidden />
+                      Super administrator
+                    </span>
+                  ) : (
+                    <select
+                      className="input w-auto py-2 pr-8"
+                      aria-label={`Rola: ${admin.email}`}
+                      value={admin.role}
+                      disabled={isMe}
+                      onChange={(e) => void changeRole(admin, e.target.value as AssignableAdminRole)}
+                    >
+                      {ROLE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  {isMe && isSuper && !ownPassword && (
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => setOwnPassword({ current: '', next: '', repeat: '' })}
+                    >
+                      <KeyRound className="h-4 w-4" aria-hidden />
+                      Zmień hasło
+                    </button>
+                  )}
+                  {!isMe && !isSuper && (
                     <Menu
                       align="right"
                       triggerLabel={`Więcej akcji: ${admin.email}`}
@@ -167,8 +225,68 @@ export default function AdminTeam() {
                         admin.disabled
                           ? { label: 'Odblokuj konto', icon: RotateCcw, onSelect: () => void toggleDisabled(admin) }
                           : { label: 'Zablokuj konto', icon: Ban, tone: 'danger', onSelect: () => void toggleDisabled(admin) },
+                        // Usuwanie kont jest zarezerwowane dla super administratora.
+                        ...(me.role === 'SUPER_ADMIN'
+                          ? [{ label: 'Usuń konto', icon: Trash2, tone: 'danger' as const, onSelect: () => void deleteAccount(admin) }]
+                          : []),
                       ]}
                     />
+                  )}
+                  {isMe && isSuper && ownPassword && (
+                    <form onSubmit={changeOwnPassword} className="grid w-full gap-3 border-t border-slate-100 pt-3 sm:grid-cols-3">
+                      <div>
+                        <label className="label" htmlFor="own-current-password">
+                          Obecne hasło
+                        </label>
+                        <input
+                          id="own-current-password"
+                          type="password"
+                          className="input"
+                          required
+                          autoComplete="current-password"
+                          value={ownPassword.current}
+                          onChange={(e) => setOwnPassword({ ...ownPassword, current: e.target.value })}
+                        />
+                      </div>
+                      <div>
+                        <label className="label" htmlFor="own-new-password">
+                          Nowe hasło
+                        </label>
+                        <input
+                          id="own-new-password"
+                          type="password"
+                          className="input"
+                          required
+                          minLength={12}
+                          autoComplete="new-password"
+                          value={ownPassword.next}
+                          onChange={(e) => setOwnPassword({ ...ownPassword, next: e.target.value })}
+                        />
+                      </div>
+                      <div>
+                        <label className="label" htmlFor="own-repeat-password">
+                          Powtórz nowe hasło
+                        </label>
+                        <input
+                          id="own-repeat-password"
+                          type="password"
+                          className="input"
+                          required
+                          minLength={12}
+                          autoComplete="new-password"
+                          value={ownPassword.repeat}
+                          onChange={(e) => setOwnPassword({ ...ownPassword, repeat: e.target.value })}
+                        />
+                      </div>
+                      <div className="flex flex-wrap gap-2 sm:col-span-3">
+                        <button type="submit" className="btn-primary" disabled={busy}>
+                          {busy ? 'Zapisywanie…' : 'Zapisz hasło'}
+                        </button>
+                        <button type="button" className="btn-ghost" onClick={() => setOwnPassword(null)}>
+                          Anuluj
+                        </button>
+                      </div>
+                    </form>
                   )}
                 </li>
               );

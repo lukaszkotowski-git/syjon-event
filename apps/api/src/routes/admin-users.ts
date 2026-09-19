@@ -3,19 +3,20 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { createAdminUserRequest, updateAdminUserRequest, type AdminUserDto } from '@syjonevent/shared';
 import type { Admin } from '@prisma/client';
-import { requireAdmin, requireFullAdmin } from '../auth/middleware.js';
+import { requireAdmin, requireFullAdmin, requireSuperAdmin } from '../auth/middleware.js';
 import { asyncHandler } from '../http/async-handler.js';
-import { badRequest, conflict, notFound } from '../http/errors.js';
+import { hashSessionToken } from '../auth/session.js';
+import { badRequest, conflict, forbidden, notFound } from '../http/errors.js';
 import { prisma } from '../prisma.js';
 import { audit } from '../services/audit.js';
 import { isUniqueViolation } from '../services/capacity.js';
+import { PASSWORD_HASH_ROUNDS } from '../services/super-admin.js';
 
 /** Zarządzanie kontami panelu — tylko dla administratorów z pełnym dostępem. */
 export const adminUsersRouter: Router = Router();
 adminUsersRouter.use(requireAdmin, requireFullAdmin);
 
-const ROLE_LABELS = { ADMIN: 'administrator', VIEWER: 'tylko podgląd' } as const;
-const PASSWORD_HASH_ROUNDS = 12;
+const ROLE_LABELS = { SUPER_ADMIN: 'super administrator', ADMIN: 'administrator', VIEWER: 'tylko podgląd' } as const;
 
 function toDto(admin: Admin, lastSeenAt: Date | null): AdminUserDto {
   return {
@@ -78,13 +79,26 @@ adminUsersRouter.patch(
     const body = updateAdminUserRequest.parse(req.body);
 
     const isSelf = admin.id === req.admin!.id;
+    // Konto super administratora pochodzi z env: nikt inny go nie zmienia, a on sam — tylko swoje hasło.
+    if (admin.role === 'SUPER_ADMIN') {
+      if (!isSelf) throw forbidden('Konto super administratora może zmienić tylko on sam');
+      if (body.role !== undefined || body.disabled !== undefined) {
+        throw badRequest('Roli ani blokady konta super administratora nie da się zmienić w panelu');
+      }
+      if (body.password !== undefined) {
+        const currentOk = await bcrypt.compare(body.currentPassword ?? '', admin.passwordHash);
+        if (!currentOk) throw badRequest('Obecne hasło jest niepoprawne', { currentPassword: 'Niepoprawne hasło' });
+      }
+    }
     if (isSelf && (body.role === 'VIEWER' || body.disabled === true)) {
       throw badRequest('Nie możesz odebrać uprawnień ani zablokować własnego konta');
     }
     // Zawsze musi zostać przynajmniej jeden aktywny administrator — inaczej nikt nie odzyska dostępu.
     const losesAdmin = admin.role === 'ADMIN' && admin.disabledAt === null && (body.role === 'VIEWER' || body.disabled === true);
     if (losesAdmin) {
-      const activeAdmins = await prisma.admin.count({ where: { role: 'ADMIN', disabledAt: null } });
+      const activeAdmins = await prisma.admin.count({
+        where: { role: { in: ['ADMIN', 'SUPER_ADMIN'] }, disabledAt: null },
+      });
       if (activeAdmins <= 1) throw badRequest('Musi zostać przynajmniej jeden aktywny administrator');
     }
 
@@ -104,6 +118,13 @@ adminUsersRouter.patch(
         data: { revokedAt: new Date() },
       });
     }
+    // Własne nowe hasło — wylogowujemy pozostałe urządzenia, bieżąca sesja zostaje.
+    if (isSelf && body.password !== undefined && req.sessionToken) {
+      await prisma.session.updateMany({
+        where: { adminId: admin.id, revokedAt: null, idHash: { not: hashSessionToken(req.sessionToken) } },
+        data: { revokedAt: new Date() },
+      });
+    }
 
     const changes = [
       body.role !== undefined && body.role !== admin.role ? `rola: ${ROLE_LABELS[body.role]}` : null,
@@ -117,5 +138,29 @@ adminUsersRouter.patch(
 
     const lastSeen = await lastSeenByAdmin();
     res.json({ admin: toDto(updated, lastSeen.get(updated.id) ?? null) });
+  }),
+);
+
+/**
+ * Trwałe usunięcie konta — tylko super administrator. Sesje znikają kaskadowo, a wpisy dziennika,
+ * wysłane wiadomości i utworzone wydarzenia zostają (odwołanie do konta jest zerowane, e-mail
+ * w dzienniku to snapshot).
+ */
+adminUsersRouter.delete(
+  '/:adminId',
+  requireSuperAdmin,
+  asyncHandler(async (req, res) => {
+    const id = z.string().uuid().safeParse(req.params.adminId);
+    const admin = id.success ? await prisma.admin.findUnique({ where: { id: id.data } }) : null;
+    if (!admin) throw notFound('Nie znaleziono konta');
+    if (admin.role === 'SUPER_ADMIN') throw badRequest('Konta super administratora nie można usunąć');
+
+    await prisma.admin.delete({ where: { id: admin.id } });
+    await audit(req, {
+      action: 'admin.delete',
+      entityId: admin.id,
+      summary: `Usunięto konto ${admin.email} (${ROLE_LABELS[admin.role]})`,
+    });
+    res.status(204).end();
   }),
 );

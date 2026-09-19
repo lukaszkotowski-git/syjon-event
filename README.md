@@ -12,7 +12,7 @@ prisma          schema.prisma, migracja inicjalna, seed adminów
 ## Uruchomienie lokalne (bez Dockera)
 
 ```bash
-cp .env.example .env          # uzupełnij SESSION_SECRET, ADMIN_USERS, klucze Paynow
+cp .env.example .env          # uzupełnij SESSION_SECRET, ADMIN_USERS, SUPER_ADMIN_*, klucze Paynow
 npm install
 npx prisma migrate deploy --schema prisma/schema.prisma
 npm run build -w @syjonevent/shared
@@ -41,6 +41,11 @@ Zmienne ustawiasz w panelu Dokploy (nie w repo). Domenę kierujesz na usługę `
 nginx proxy'uje `/api` do kontenera `api`, więc webhook Paynow jest pod
 `https://twoja-domena/api/webhooks/paynow`. Ten adres wpisujesz w Panelu Merchanta Paynow.
 Po pierwszym deployu: `docker compose -f docker-compose.prod.yml exec api npm run seed:admins`.
+
+Konto super administratora (`SUPER_ADMIN_EMAIL` / `SUPER_ADMIN_PASSWORD`) API tworzy samo przy starcie.
+W panelu nie da się go utworzyć, zablokować ani zmienić mu roli, a hasło zmienia tylko ono samo.
+Tylko super administrator może trwale usuwać inne konta.
+Zapomniane hasło: ustaw nowe `SUPER_ADMIN_PASSWORD` i zrestartuj API.
 
 ## Testy
 
